@@ -1,4 +1,4 @@
-# This library approximation to the optimal of an artibrary energy on a 2-D lattice
+# This library calculates an approximation to the optimal of an artibrary energy on a 2-D lattice
 #	by splitting the lattice into sub-graphs formed by the smallest possible loops,
 #	that is, the smallest loops of four vertices (nodes) forming a square. 
 
@@ -192,9 +192,9 @@ class Lattice:
 		# If n_labels is an integer, we assume that all nodes should get the same max_n_label.
 		# Another option is to specify a list of max_n_labels. 
 		if type(n_labels) == np.int:
-			self.n_labels	= n_labels*np.ones(self.n_nodes)
+			self.n_labels	= n_labels*np.ones(self.n_nodes).astype(np.int)
 		elif np.array(n_labels).size == self.n_nodes:
-			self.n_labels	= np.array(n_labels)
+			self.n_labels	= np.array(n_labels).astype(np.int)
 		# In any case, the max n labels for this Lattice is np.max(self.n_lables)
 		self.max_n_labels	= np.max(self.n_labels)
 		
@@ -300,14 +300,14 @@ class Lattice:
 		
 		# The following lists record for every node and edge, to which 
 		#	slaves it belongs.
-		self.nodes_in_slaves	= [[]]*self.n_nodes
-		self.edges_in_slaves	= [[]]*self.n_edges
+		self.nodes_in_slaves	= [[] for i in range(self.n_nodes)]
+		self.edges_in_slaves	= [[] for i in range(self.n_edges)]
 
 		# We also make a slave list for nodes and edges. For each node and edge, 
 		#	its list contains the IDs of all slaves that contain it. Initially, 
 		# 	these lists are empty. We will fill them up. 
-		self.slave_list_for_nodes	= [[]]*self.n_nodes
-		self.slave_list_for_edges	= [[]]*self.n_edges
+		self.slave_list_for_nodes	= [[] for i in range(self.n_nodes)]
+		self.slave_list_for_edges	= [[] for i in range(self.n_edges)]
 
 		# Iterate over the number of slaves to create each one. 
 		slave_ids	= [[i,j] for i in range(self.rows-1) for j in range(self.cols-1)]
@@ -390,13 +390,19 @@ class Lattice:
 
 		# Loop till not converged. 
 		while not converged:
-			alpha	= a_start/sqrt(it)
+			alpha	= a_start/np.sqrt(it)
+
+			print 'Iteration %d. Optimising slaves ...' %(it),
 			self._optimise_slaves()
+			print 'done.',
 
 			if self._check_consistency():
 				print 'Converged after %d iterations!' %(it)
 				print 'alpha_t at convergence iteration is %g.' %(alpha)
 				self._assign_labels()
+
+			disagreements = self._find_disagreeing_nodes()
+			print ' alpha = %g. n_miss = %d' %(alpha, disagreements.size)
 
 			self._apply_param_updates(alpha)
 		
@@ -441,6 +447,7 @@ class Lattice:
 			if s_ids.size == 1:
 				continue
 
+			# Retrieve labels assigned to this point by each slave. 
 			ls_		= [self.slave_list[s].get_node_label(n_id) for s in s_ids]
 			ret_	= reduce(lambda x,y: x == y, ls_)
 
@@ -454,7 +461,7 @@ class Lattice:
 			#
 			for l_id in range(self.n_labels[n_id]):
 				# Find slaves that assign this point the label l_id. 
-				slaves_with_this_l_id		= [s_ids[i] for i in np.where(ls_ == l_id)[0]]
+				slaves_with_this_l_id		= np.array([s_ids[i] for i in np.where(ls_ == l_id)[0]])
 				slaves_without_this_l_id	= np.setdiff1d(s_ids, slaves_with_this_l_id)
 
 				# Calculate updates, given by the equation above. 
@@ -469,6 +476,9 @@ class Lattice:
 				for s_nl_id in slaves_without_this_l_id:
 					self.slave_list[s_nl_id].node_energies[l_id] += no_l_id_delta
 
+				# Set flags for these slaves to True
+				slave_flags[s_ids] = True
+
 		# That completes the updates for node energies. Now we move to edge energies. 
 		for e_id in range(self.n_edges):
 			# Retrieve the list of slaves that use this edge. 
@@ -477,9 +487,37 @@ class Lattice:
 			if s_ids.size == 1:
 				continue
 
+			# Retrieve labellings of this edge, assigned by each slave.
+			x, y	= self._node_ids_from_edge_id(e_id)
+			ls_		= [(self.slave_list[s].get_node_label(x), self.slave_list[s].get_node_label(y)) for s in s_ids]
+			ret_	= reduce(lambda x,y: x == y, ls_)
 
-			
+			# If True, no need to update parameters here. 
+			if ret_:
+				continue
 
+			# Create a matrix which records which label pairs occurred how many times
+			label_freq_mat	= np.zeros((self.n_labels[x], self.n_labels[y]))
+			for up in ls_:
+				lx, ly = up
+				label_freq_mat[lx][ly] += 1
+
+			# Now we can make updates. 
+			non_zero_labels	= np.where(label_freq_mat != 0)
+			for lpairs in zip(non_zero_labels[0], non_zero_labels[1]):
+				for s in range(s_ids.size):
+					s_id = s_ids[s]
+					e_id_in_slave	= np.where(self.slave_list[s_id].edge_list == e_id)[0]
+					if ls_[s] == lpairs:
+						self.slave_list[s_id].edge_energies[e_id_in_slave][lpairs] += alpha*(1.0 - label_freq_mat[lpairs]*1.0/s_ids.size)
+					else:
+						self.slave_list[s_id].edge_energies[e_id_in_slave][lpairs] += alpha*(-1.0*(s_ids.size - label_freq_mat[lpairs])/s_ids.size)
+
+			# Set flags for these slaves to True, which means they should be solved again. 
+			slave_flags[s_ids] = True
+
+		# Reset the slaves to solve. 
+		self._slaves_to_solve = np.where(slave_flags == True)[0]
 
 
 	def _check_consistency(self):
@@ -496,6 +534,21 @@ class Lattice:
 			if not ret_:
 				return False
 		return True
+
+
+	def _find_disagreeing_nodes(self):
+		'''
+		A function to find disagreeing nodes at a step of the algorithm. 
+		'''
+		disagreements = np.zeros(self.n_nodes, dtype=bool)
+
+		for n_id in range(self.n_nodes):
+			s_ids	= self.nodes_in_slaves[n_id]
+			ls_		= [self.slave_list[s].get_node_label(n_id) for s in s_ids]
+			ret_	= reduce(lambda x,y: x == y, ls_)
+			if not ret_:
+				disagreements[n_id] = True
+		return np.where(disagreements == True)[0]
 
 
 	def _assign_labels(self):
