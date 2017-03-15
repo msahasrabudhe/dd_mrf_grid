@@ -35,4 +35,23 @@ To add energies to nodes and edges, use
 lat.set_node_energies(i, E_node)
 lat.set_edge_energies(i, j, E_edge)
 ```
-where `i` and `j` are node indices, and `E_edge` and `E_edge` are 
+where `i` and `j` are node indices, and `E_node` and `E_edge` are, respectively, the node and edge energies. `E_node` 
+must have `n_labels[i]` elements, while `E_edge` must have shape `(n_labels[x], n_labels[y])`, where `x` and `y` are 
+defined as `x, y = min(i,j), max(i,j)`.
+
+All nodes and edges must be assigned energies before the overall energy can be minimised. To verify whether all 
+energies have been defined, use
+```python
+lat.check_completeness()
+```
+
+A complete grid can be optimised using 
+```python
+lat.optimise(a_start=1.0)
+```
+ 
+After the algorithm converges, the obtained labelling is stored in `lat.labels`. 
+
+References
+----------
+[1] MRF Energy Minimization and Beyond via Dual Decomposition, N. Komodakis, N. Paragios and G. Tziritas, PAMI 2011. 
