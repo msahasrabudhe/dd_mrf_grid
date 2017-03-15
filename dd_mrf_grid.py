@@ -110,6 +110,7 @@ class Slave:
 		Retrieve the label of a node in the current labelling
 		'''
 		if n_id not in self.node_list:
+			print self.node_list,
 			print 'Node %d is not in this slave.' %(n_id)
 			raise ValueError
 		return self.label_from_node[n_id]
@@ -357,7 +358,6 @@ class Lattice:
 		self.nodes_in_slaves	= [np.array(t) for t in self.nodes_in_slaves]
 		self.edges_in_slaves	= [np.array(t) for t in self.edges_in_slaves]
 
-
 	def optimise(self, a_start=1.0):
 		'''
 		Lattice.optimise(): Optimise the set energies over the lattice and return a labelling. 
@@ -393,18 +393,34 @@ class Lattice:
 			alpha	= a_start/np.sqrt(it)
 
 			print 'Iteration %d. Optimising slaves ...' %(it),
+			# Solve all the slaves. 
+			# The following optimises the energy for each slave, and stores the 
+			#    resulting labelling as a member in the slaves. 
 			self._optimise_slaves()
 			print 'done.',
 
+			# Verify whether the algorithm has converged. If all slaves agree
+			#    on the labelling of every node, we have convergence. 
 			if self._check_consistency():
 				print 'Converged after %d iterations!' %(it)
 				print 'alpha_t at convergence iteration is %g.' %(alpha)
+				# Finally, assign labels.
 				self._assign_labels()
+				# Break from loop.
+				converged = True
+				break
 
+			# Find the number of disagreeing points. 
 			disagreements = self._find_disagreeing_nodes()
 			print ' alpha = %g. n_miss = %d' %(alpha, disagreements.size)
 
+			# Apply updates to parameters of each slave. 
 			self._apply_param_updates(alpha)
+
+			# Increase iteration.
+			it += 1
+
+		print 'The final labelling is stored as a member \'label\' in the object.'
 		
 
 	def _optimise_slaves(self):
@@ -428,7 +444,8 @@ class Lattice:
 			raise AssertionError
 		# Reflect the result in slave list for our Lattice. 
 		for i in range(self._slaves_to_solve.size):
-			self.slave_list[i]	= result[i][1]
+			s_id = self._slaves_to_solve[i]
+			self.slave_list[s_id]	= result[i][1]
 
 	
 	def _apply_param_updates(self, alpha):
@@ -496,22 +513,40 @@ class Lattice:
 			if ret_:
 				continue
 
-			# Create a matrix which records which label pairs occurred how many times
-			label_freq_mat	= np.zeros((self.n_labels[x], self.n_labels[y]))
-			for up in ls_:
-				lx, ly = up
-				label_freq_mat[lx][ly] += 1
+			# If we reach this stage, we have an edge shared between two trees, with both of them
+			#    assigning it different labels. A little bit of hard-coding goes a long way in improving 
+			#    performance. 
+			lx_1, ly_1	= ls_[0]
+			lx_2, ly_2	= ls_[1]
 
-			# Now we can make updates. 
-			non_zero_labels	= np.where(label_freq_mat != 0)
-			for lpairs in zip(non_zero_labels[0], non_zero_labels[1]):
-				for s in range(s_ids.size):
-					s_id = s_ids[s]
-					e_id_in_slave	= np.where(self.slave_list[s_id].edge_list == e_id)[0]
-					if ls_[s] == lpairs:
-						self.slave_list[s_id].edge_energies[e_id_in_slave][lpairs] += alpha*(1.0 - label_freq_mat[lpairs]*1.0/s_ids.size)
-					else:
-						self.slave_list[s_id].edge_energies[e_id_in_slave][lpairs] += alpha*(-1.0*(s_ids.size - label_freq_mat[lpairs])/s_ids.size)
+			s_1	= s_ids[0]
+			s_2	= s_ids[1]
+
+			e_id_s_1	= np.where(self.slave_list[s_1].edge_list == e_id)[0][0]
+			e_id_s_2	= np.where(self.slave_list[s_2].edge_list == e_id)[0][0]
+
+			self.slave_list[s_1].edge_energies[e_id_s_1][lx_2][ly_2]	-= alpha/2
+			self.slave_list[s_2].edge_energies[e_id_s_2][lx_1][ly_1]	-= alpha/2
+
+			self.slave_list[s_1].edge_energies[e_id_s_1][lx_1][ly_1]	+= alpha/2
+			self.slave_list[s_2].edge_energies[e_id_s_2][lx_2][ly_2]	+= alpha/2
+
+			# Create a matrix which records which label pairs occurred how many times
+#			label_freq_mat	= np.zeros((self.n_labels[x], self.n_labels[y]))
+#			for up in ls_:
+#				lx, ly = up
+#				label_freq_mat[lx][ly] += 1
+#
+#			# Now we can make updates. 
+#			non_zero_labels	= np.where(label_freq_mat != 0)
+#			for lpairs in zip(non_zero_labels[0], non_zero_labels[1]):
+#				for s in range(s_ids.size):
+#					s_id = s_ids[s]
+#					e_id_in_slave	= np.where(self.slave_list[s_id].edge_list == e_id)[0]
+#					if ls_[s] == lpairs:
+#						self.slave_list[s_id].edge_energies[e_id_in_slave][lpairs[0],lpairs[1]] += alpha*(1.0 - label_freq_mat[lpairs[0],lpairs[1]]*1.0/s_ids.size)
+#					else:
+#						self.slave_list[s_id].edge_energies[e_id_in_slave][lpairs[0],lpairs[1]] += alpha*(-1.0*(s_ids.size - label_freq_mat[lpairs[0],lpairs[1]])/s_ids.size)
 
 			# Set flags for these slaves to True, which means they should be solved again. 
 			slave_flags[s_ids] = True

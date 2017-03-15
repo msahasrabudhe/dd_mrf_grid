@@ -3,7 +3,7 @@ import dd_mrf_grid as ddmrf
 np = ddmrf.np
 
 if __name__ == '__main__':
-	lat = ddmrf.Lattice(5, 5 ,2)
+	lat = ddmrf.Lattice(10, 10 ,2)
 
 	for i in range(lat.n_nodes):
 		t = np.random.rand()
