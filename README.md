@@ -6,6 +6,13 @@ DD-MRF on a regular 2-D grid
 This Python library implements the Dual Decomposition algorithm by Komodakis, Paragios, and Tziritas [1] on a regular
 2-D grid by dividing the graph into sub-problems (slaves), each sub-problem being a unique loop of four points. 
 
+Requirements
+------------
+The Python packages `numpy` and `joblib` are required. `numpy` is used extensively for mathematics and `joblib`
+allows distributing operations over several cores of the machine. 
+
+Usage
+-----
 To use, simply include the library in your Python code:
 ```python
 import dd_mrf_grid as ddmrf
@@ -23,4 +30,9 @@ the Numpy array) is index `0`, and the index increments along the row first.
 Edges can be specified by indicating the two nodes they are between. Nodes are specified by indices, as indicated
 above. 
 
-
+To add energies to nodes and edges, use
+```python
+lat.set_node_energies(i, E_node)
+lat.set_edge_energies(i, j, E_edge)
+```
+where `i` and `j` are node indices, and `E_edge` and `E_edge` are 
