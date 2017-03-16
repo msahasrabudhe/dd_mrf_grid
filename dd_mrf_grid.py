@@ -5,9 +5,6 @@
 import numpy as np
 from joblib import Parallel, delayed, cpu_count
 
-# Epsilon to determine at most how far two floats can be to be considered equal. 
-_FLOAT_EPSILON	= 1e-10
-
 class Slave:
 	'''
 	A class to store a slave. An instance of this class stores
@@ -266,8 +263,8 @@ class Lattice:
 		# Check for the possibility of an edge. 
 		if (y - x != 1) and (y - x != self.cols):
 			# This signifies y is neither the node to the right of x, nor the node below x. 
-			print 'Lattice.set_edge_energies(): The supplied edge indices are not consistent - a 2D',
-			print 'lattice does not have an edge between %d and %d.' (i, j)
+			print 'Lattice.set_edge_energies(): The supplied edge indices are not consistent - this 2D',
+			print 'lattice does not have an edge between %d and %d.' %(i, j)
 			raise ValueError
 
 		# Correct the shape of the matrix, if required. If the user specified the matrix in a column-major
@@ -397,7 +394,7 @@ class Lattice:
 			
 
 
-	def optimise(self, a_start=1.0):
+	def optimise(self, a_start=1.0, max_iter=1000):
 		'''
 		Lattice.optimise(): Optimise the set energies over the lattice and return a labelling. 
 
@@ -428,10 +425,10 @@ class Lattice:
 		self._slaves_to_solve	= np.arange(self.n_slaves)
 
 		# Loop till not converged. 
-		while not converged:
+		while not converged and it <= max_iter:
 			alpha	= a_start/np.sqrt(it)
 
-			print 'Iteration %d. Optimising slaves ...' %(it),
+			print 'Iteration %d. %d subproblems to be solved. Optimising ...' %(it, self._slaves_to_solve.size),
 			# Solve all the slaves. 
 			# The following optimises the energy for each slave, and stores the 
 			#    resulting labelling as a member in the slaves. 
@@ -505,7 +502,7 @@ class Lattice:
 
 			# Retrieve labels assigned to this point by each slave. 
 			ls_		= [self.slave_list[s].get_node_label(n_id) for s in s_ids]
-			ret_	= reduce(lambda x,y: x == y, ls_)
+			ret_	= reduce(lambda x,y: x and (y == ls_[0]), ls_[1:], True)
 
 			# If True, no need to update parameters here. 
 			if ret_:
@@ -546,7 +543,7 @@ class Lattice:
 			# Retrieve labellings of this edge, assigned by each slave.
 			x, y	= self._node_ids_from_edge_id(e_id)
 			ls_		= [(self.slave_list[s].get_node_label(x), self.slave_list[s].get_node_label(y)) for s in s_ids]
-			ret_	= reduce(lambda x,y: x == y, ls_)
+			ret_	= reduce(lambda x,y: x and (y == ls_[0]), ls_[1:], True)
 
 			# If True, no need to update parameters here. 
 			if ret_:
@@ -561,8 +558,8 @@ class Lattice:
 			s_1	= s_ids[0]
 			s_2	= s_ids[1]
 
-			e_id_s_1	= np.where(self.slave_list[s_1].edge_list == e_id)[0][0]
-			e_id_s_2	= np.where(self.slave_list[s_2].edge_list == e_id)[0][0]
+			e_id_s_1	= self.slave_list[s_1].edge_map[e_id]
+			e_id_s_2	= self.slave_list[s_2].edge_map[e_id]
 
 			self.slave_list[s_1].edge_energies[e_id_s_1][lx_2][ly_2]	-= alpha/2
 			self.slave_list[s_2].edge_energies[e_id_s_2][lx_1][ly_1]	-= alpha/2
@@ -604,7 +601,7 @@ class Lattice:
 		for n_id in range(self.n_nodes):
 			s_ids	= self.nodes_in_slaves[n_id]
 			ls_		= [self.slave_list[s].get_node_label(n_id) for s in s_ids]
-			ret_	= reduce(lambda x,y: x == y, ls_)
+			ret_	= reduce(lambda x,y: x and (y == ls_[0]), ls_[1:], True)
 			if not ret_:
 				return False
 		return True
@@ -619,7 +616,7 @@ class Lattice:
 		for n_id in range(self.n_nodes):
 			s_ids	= self.nodes_in_slaves[n_id]
 			ls_		= [self.slave_list[s].get_node_label(n_id) for s in s_ids]
-			ret_	= reduce(lambda x,y: x == y, ls_)
+			ret_	= reduce(lambda x,y: x and (y == ls_[0]), ls_[1:], True)
 			if not ret_:
 				disagreements[n_id] = True
 		return np.where(disagreements == True)[0]
@@ -635,7 +632,7 @@ class Lattice:
 		'''
 		for n_id in range(self.n_nodes):
 			s_id				= self.nodes_in_slaves[n_id][0]
-			self.labels[n_id]	= s_id.get_node_label(n_id)
+			self.labels[n_id]	= self.slave_list[s_id].get_node_label(n_id)
 		return self.labels
 
 
