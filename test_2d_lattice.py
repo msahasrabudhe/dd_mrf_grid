@@ -13,5 +13,5 @@ if __name__ == '__main__':
 		t = np.random.rand()
 		lat.set_edge_energies(e[0], e[1], [[t, 1-t], [1-t, t]])
 
-	lat.optimise()
+	lat.optimise(a_start=0.01)
 	print lat.labels

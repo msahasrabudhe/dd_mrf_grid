@@ -92,6 +92,15 @@ class Slave:
 		self.n_labels		= n_labels
 		self.edge_energies	= edge_energies
 
+		# These dictionaries enable to determine easily at which 
+		#    index in node_list or edge_list, a particular node
+		#    or edge is. 
+		self.node_map		= {}
+		self.edge_map		= {}
+		for i in range(4):
+			self.node_map[node_list[i]] = i
+			self.edge_map[edge_list[i]] = i
+
 	def set_labels(self, labels):
 		'''
 		Slave.set_labels():	Set the labelling for a slave
@@ -214,7 +223,7 @@ class Lattice:
 		Lattice.set_node_energies(): Set the node energies for node i. 
 		'''
 		# Convert the energy to a numpy array
-		energies = np.array(energies)
+		energies = np.array(energies, dtype=np.float32)
 
 		if energies.size > self.n_labels[i]:
 			print 'Lattice.set_node_energies(): The supplied node energies have more labels',
@@ -233,7 +242,7 @@ class Lattice:
 		and makes the assignment only if such an edge is possible.
 		'''
 		# Convert the energy to a numpy array
-		energies = np.array(energies)
+		energies = np.array(energies, dtype=np.float32)
 
 		# Convert indices to int, just in case ...
 		i = np.int(i)
@@ -348,7 +357,7 @@ class Lattice:
 			# Make assignments for this slave. 
 			self.slave_list[s_id].set_params(node_list, edge_list, node_energies, n_labels, edge_energies)
 
-			# Finally, add this slave the appropriate nodes_in_slaves, and edges_in_slaves
+			# Finally, add this slave the appropriate nodes_in_slaves, and edges_in_slaves.
 			for n_id in node_list:
 				self.nodes_in_slaves[n_id] 	+= [s_id]
 			for e_id in edge_list:
@@ -357,6 +366,36 @@ class Lattice:
 		# For convenience, turn the individual lists in nodes_in_slaves and edges_in_slaves into numpy arrays. 
 		self.nodes_in_slaves	= [np.array(t) for t in self.nodes_in_slaves]
 		self.edges_in_slaves	= [np.array(t) for t in self.edges_in_slaves]
+
+		# Finally, we must modify the energies for every edge or node depending on 
+		#   how many slaves it is a part of. The energy for a node/edge is distributed
+		#   equally among all slaves. 
+		for n_id in range(self.n_nodes):
+			# Retrieve all the slaves this node is part of.
+			s_ids	= self.nodes_in_slaves[n_id]
+			# If there is only one slave, no need to do anything.
+			if s_ids.size == 1:
+				continue
+			# Distribute this node's energy equally between all slaves.
+			for s in s_ids:
+				n_id_in_slave	= self.slave_list[s].node_map[n_id]
+				self.slave_list[s].node_energies[n_id_in_slave] /= 1.0*s_ids.size
+
+		# Doing the same for edges ...
+		for e_id in range(self.n_edges):
+			# Retrieve all slaves this edge is part of.
+			s_ids	= self.edges_in_slaves[e_id]
+			# Do nothing if this edge is in only one slave
+			if s_ids.size == 1:
+				continue
+			# Distribute this edge's energy equally between all slaves. 
+			for s in s_ids:
+				e_id_in_slave	= self.slave_list[s].edge_map[e_id]
+				self.slave_list[s].edge_energies[e_id_in_slave] /= 1.0*s_ids.size
+
+		# That is it. The slaves are ready. 
+			
+
 
 	def optimise(self, a_start=1.0):
 		'''
