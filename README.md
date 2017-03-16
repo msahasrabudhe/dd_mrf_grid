@@ -22,9 +22,9 @@ Graphs can be built incrementally using the Lattice class provided by the module
 ```python
 lat = ddmrf.Lattice(rows, cols, n_labels)
 ```      
-where `rows` and `cols` signify the number of rows and columns in the grid, and n_labels is the number of labels 
+where `rows` and `cols` signify the number of rows and columns in the grid, and `n_labels` is the number of labels 
 each node takes. n_labels can be an integer (in which case all nodes can take the same number of labels), or a 
-numpy array or list of integers of size `rows*cols` to specify how many labels each node must take.
+Numpy array or list of integers of size `rows*cols` to specify how many labels each node must take.
 
 The nodes are indexed in a row-major fashion, starting at the top-left. Thus, the top-left node (also `[0,0]` in
 the Numpy array) is index `0`, and the index increments along the row first. 
