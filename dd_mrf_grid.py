@@ -4,6 +4,11 @@
 
 import numpy as np
 from joblib import Parallel, delayed, cpu_count
+import scipy.stats as stats
+
+
+# The dtype to use to store energies. 
+e_dtype = np.float64
 
 class Slave:
 	'''
@@ -98,11 +103,17 @@ class Slave:
 			self.node_map[node_list[i]] = i
 			self.edge_map[edge_list[i]] = i
 
+	def get_params(self):
+		'''
+		Slave.get_params(): Return parameters of this slave
+		'''
+		return self.node_list, self.edge_list, self.node_energies, self.n_labels, self.edge_energies
+
 	def set_labels(self, labels):
 		'''
 		Slave.set_labels():	Set the labelling for a slave
 		'''
-		self.labels		= labels
+		self.labels	= np.array(labels, dtype=np.int)
 
 		# Also maintain a dictionary to easily fetch the label 
 		#	given a node ID.
@@ -121,12 +132,20 @@ class Slave:
 			raise ValueError
 		return self.label_from_node[n_id]
 
+
+	def optimise(self):
+		'''
+		Optimise this slave. 
+		'''
+		return _optimise_4node_slave(self)
+
 	def _compute_energy(self):
 		'''
 		Slave._compute_energy(): Computes the energy corresponding to
 								 the labels. 
 		'''
 		self._energy	= _compute_slave_energy(self.node_energies, self.edge_energies, self.labels)
+		return self._energy
 
 # ---------------------------------------------------------------------------------------
 
@@ -206,8 +225,8 @@ class Lattice:
 		self.max_n_labels	= np.max(self.n_labels)
 		
 		# Initialise the node and edge energies. 
-		self.node_energies	= [None]*self.n_nodes		#np.zeros((self.n_nodes, self.max_n_labels))
-		self.edge_energies	= [None]*self.n_edges		#np.zeros((self.n_edges, self.max_n_labels, self.max_n_labels))
+		self.node_energies	= [None for i in range(self.n_nodes)]		#np.zeros((self.n_nodes, self.max_n_labels))
+		self.edge_energies	= [None for i in range(self.n_edges)]		#np.zeros((self.n_edges, self.max_n_labels, self.max_n_labels))
 
 		# Flags set to ensure that node and edge energies have been set. If any energies
 		# 	have not been set, we cannot proceed to optimisation as the lattice is not complete. 
@@ -220,11 +239,11 @@ class Lattice:
 		Lattice.set_node_energies(): Set the node energies for node i. 
 		'''
 		# Convert the energy to a numpy array
-		energies = np.array(energies, dtype=np.float32)
+		energies = np.array(energies, dtype=e_dtype)
 
-		if energies.size > self.n_labels[i]:
-			print 'Lattice.set_node_energies(): The supplied node energies have more labels',
-			print '(%d) than the permissible number (%d)' %(energies.size, self.n_labels[i])
+		if energies.size != self.n_labels[i]:
+			print 'Lattice.set_node_energies(): The supplied node energies do not agree',
+			print '(%d) on the number of labels required (%d).' %(energies.size, self.n_labels[i])
 			raise ValueError
 
 		# Make the assignment: set the node energies. 
@@ -239,42 +258,33 @@ class Lattice:
 		and makes the assignment only if such an edge is possible.
 		'''
 		# Convert the energy to a numpy array
-		energies = np.array(energies, dtype=np.float32)
+		energies = np.array(energies, dtype=e_dtype)
 
 		# Convert indices to int, just in case ...
 		i = np.int(i)
 		j = np.int(j)
-		# The edge is always from the lower index to the higher index. Hence, 
-		#	find the lower and higher coordinate
-		x, y = [np.min([i,j]), np.max([i,j])]
 		# Check that the supplied energy has the correct shape. 
-		input_shape		= np.sort(energies.shape).tolist()
-		reqd_shape		= np.sort([self.n_labels[x], self.n_labels[y]]).tolist()
+		input_shape		= list(energies.shape)
+		reqd_shape		= [self.n_labels[i], self.n_labels[j]]
 		if input_shape != reqd_shape:
 			print 'Lattice.set_edge_energies(): The supplied energies have invalid shape:',
-			print '(%d, %d). It must be (%d, %d) or (%d, %d).' \
-						%(energies.shape[0], energies.shape[1], self.n_labels[i], self.n_labels[j], self.n_labels[i], self.n_labels[j])
+			print '(%d, %d). It must be (%d, %d).' \
+						%(energies.shape[0], energies.shape[1], self.n_labels[i], self.n_labels[j])
 			raise ValueError
 
 		# Check that indices are not out of range. 
-		if x >= self.n_nodes or y >= self.n_nodes:
+		if i >= self.n_nodes or j >= self.n_nodes:
 			print 'Lattice.set_edge_energies(): At least one of the supplied edge indices is invalid.'
 			raise IndexError
 		# Check for the possibility of an edge. 
-		if (y - x != 1) and (y - x != self.cols):
-			# This signifies y is neither the node to the right of x, nor the node below x. 
+		if (j - i != 1) and (j - i != self.cols):
+			# This signifies j is neither the node to the right of i, nor the node below i. 
 			print 'Lattice.set_edge_energies(): The supplied edge indices are not consistent - this 2D',
 			print 'lattice does not have an edge between %d and %d.' %(i, j)
 			raise ValueError
 
-		# Correct the shape of the matrix, if required. If the user specified the matrix in a column-major
-		#	fashion, it is possible it was specified of shape (self.n_labels[y], self.n_labels[x]), instead of the
-		#	the other way around. 
-		if energies.shape[0] == self.n_labels[y]:
-			energies = energies.transpose()
-
 		# We can proceed - everything is okay. 
-		edge_id	= self._edge_id_from_node_ids(x,y)
+		edge_id	= self._edge_id_from_node_ids(i, j)
 
 		# Make assignment: set the edge energies. 
 		self.edge_energies[edge_id]	= energies
@@ -330,7 +340,11 @@ class Lattice:
 			i_list		= np.array([i, i, i+1, i+1], dtype=np.int)
 			j_list		= np.array([j, j+1, j, j+1], dtype=np.int)
 			node_list	= i_list*self.cols + j_list
-	
+
+			# The number of labels can be easily extracted from self.n_labels.
+			n_labels	= np.zeros(4, dtype=np.int)
+			n_labels[:]	= self.n_labels[node_list].astype(np.int)
+
 			# The included edges are (i,j)-(i,j+1), (i,j)-(i+1,j), 
 			#	(i,j+1)-(i+1,j+1), and (i+1,j)-(i+1,j+1), in that order. 
 			# We will make four IDs, e1, ..., e4, for the four edges in this slave. 
@@ -342,14 +356,22 @@ class Lattice:
 			edge_list	= np.array([e1, e2, e3, e4])
 	
 			# The node energies for this slave
-			node_energies	= [self.node_energies[i] for i in node_list]
-	
-			# The number of labels can be easily extracted from self.n_labels.
-			n_labels	= self.n_labels[node_list].astype(np.int)
+			node_energies	= [np.zeros(nl, dtype=e_dtype) for nl in n_labels]
+			for i in range(4):
+				node_energies[i][:] = self.node_energies[node_list[i]][:]
+#			node_energies	= [self.node_energies[i] for i in node_list]
 	
 			# We now extract the edge energies, which are easy to extract as well, as we know
 			# 	the edge IDs for all edges in this slave. 
-			edge_energies	= [self.edge_energies[i] for i in edge_list]
+			# e_label_list stores the required size of the energy matrix for edge in edge_list
+			e_label_list 	= [(n_labels[0], n_labels[1]), \
+						   	   (n_labels[0], n_labels[2]), \
+							   (n_labels[1], n_labels[3]), \
+							   (n_labels[2], n_labels[3])]
+			edge_energies	= [np.zeros(sz) for sz in e_label_list]
+			for i in range(4):
+				edge_energies[i][:] = self.edge_energies[edge_list[i]][:]
+#			edge_energies	= [self.edge_energies[i] for i in edge_list]
 	
 			# Make assignments for this slave. 
 			self.slave_list[s_id].set_params(node_list, edge_list, node_energies, n_labels, edge_energies)
@@ -394,13 +416,37 @@ class Lattice:
 			
 
 
-	def optimise(self, a_start=1.0, max_iter=1000):
+	def optimise(self, a_start=1.0, max_iter=1000, strategy='step'):
 		'''
 		Lattice.optimise(): Optimise the set energies over the lattice and return a labelling. 
 
-		Takes as input a_start, which is a float and denotes the starting value of \alpha_t in
+		Takes as input a_start, which is a float and denotes the starting value of \\alpha_t in
 		the DD-MRF algorithm. 
+
+		The strategy signifies what values of \\alpha to use at iteration t. Permissible 
+		values are 'step' and 'adaptive'. The step strategy simply sets 
+
+		      \\alpha_t = a_start/sqrt(t).
+
+		The adaptive strategy sets 
+		 
+		      \\alpha_t = a_start*\\frac{Approx_t - Dual_t}{norm(\\nabla g_t)**2},
+
+		where \\nabla g_t is the subgradient of the dual at iteration t. 
 		'''
+
+		# Check if a permissible strategy is being used. 
+		if strategy not in ['step', 'adaptive']:
+			print 'Permissible values for strategy are \'step\', and \'adaptive\''
+			return
+		# If strategy is adaptive, we would like a_start to be in (0, 2).
+		if strategy is 'adaptive' and (a_start <= 0 or a_start >= 2):
+			print 'Please use 0 < a_start < 2 for an adaptive strategy.'
+			return
+
+		# Set the optimisation strategy. 
+		self._optim_strategy = strategy
+
 		# First check if the lattice is complete. 
 		if not self.check_completeness():
 			n_list, e_list	= self._find_empty_attributes()
@@ -424,9 +470,23 @@ class Lattice:
 		# Set all slaves to be solved at first. 
 		self._slaves_to_solve	= np.arange(self.n_slaves)
 
+		# Two lists to record the primal and dual cost progression
+		self.dual_costs			= []
+		self.primal_costs		= []
+		self.subgradient_norms	= []
+
 		# Loop till not converged. 
 		while not converged and it <= max_iter:
-			alpha	= a_start/np.sqrt(it)
+			if self._optim_strategy is 'step':
+				alpha	= a_start/np.sqrt(it)
+			elif self._optim_strategy is 'adaptive':
+				if it == 1:
+					alpha = 1
+				else:
+					approx_t	= np.min(self.primal_costs)
+					dual_t		= self.dual_costs[-1]
+					norm_gt		= self.subgradient_norms[-1]
+					alpha		= a_start*(approx_t - dual_t)/norm_gt
 
 			print 'Iteration %d. %d subproblems to be solved. Optimising ...' %(it, self._slaves_to_solve.size),
 			# Solve all the slaves. 
@@ -448,10 +508,19 @@ class Lattice:
 
 			# Find the number of disagreeing points. 
 			disagreements = self._find_disagreeing_nodes()
-			print ' alpha = %g. n_miss = %d' %(alpha, disagreements.size)
+			print ' alpha = %g. n_miss = %d.' %(alpha, disagreements.size),
 
 			# Apply updates to parameters of each slave. 
 			self._apply_param_updates(alpha)
+
+			# Get the primal cost at this iteration
+			primal_cost		= self._compute_primal_cost()
+			self.primal_costs += [primal_cost]
+
+			# Get the dual cost at this iteration
+			dual_cost		= self._compute_dual_cost()
+			self.dual_costs	+= [dual_cost]
+			print 'Primal cost = %g. Dual cost = %g' %(primal_cost, dual_cost)
 
 			# Increase iteration.
 			it += 1
@@ -481,7 +550,11 @@ class Lattice:
 		# Reflect the result in slave list for our Lattice. 
 		for i in range(self._slaves_to_solve.size):
 			s_id = self._slaves_to_solve[i]
-			self.slave_list[s_id]	= result[i][1]
+			self.slave_list[s_id].node_energies = result[i][1].node_energies
+			self.slave_list[s_id].edge_energies = result[i][1].edge_energies
+			self.slave_list[s_id].set_labels(result[i][1].labels)
+			self.slave_list[s_id]._energy		= result[i][1]._energy
+#			self.slave_list[s_id]	= result[i][1]
 
 	
 	def _apply_param_updates(self, alpha):
@@ -492,11 +565,17 @@ class Lattice:
 		# Flags to determine whether to solve a slave.
 		slave_flags	= np.zeros(self.n_slaves, dtype=bool)
 
+		# Compute the L2-norm of the subgradient. 
+		norm_gt	= 0.0
+
+	
+		_subgrad_norm_vec = np.zeros(self.max_n_labels)
+
 		# We iterate over all nodes and edges and calculate updates to parameters of all slaves. 
 		for n_id in range(self.n_nodes):
 			# Retrieve the list of slaves that use this node. 
 			s_ids	= self.nodes_in_slaves[n_id]
-			# If there is only one such node, we have nothing to do. 
+			# If there is only one such slave, we have nothing to do. 
 			if s_ids.size == 1:
 				continue
 
@@ -512,22 +591,26 @@ class Lattice:
 			#
 			#		\delta_l_id	= \alpha*(x_s(l_id) - \frac{\sum_s' x_s'(l_id)}{\sum_s' 1})
 			#
-			for l_id in range(self.n_labels[n_id]):
+			for l_id in np.unique(ls_):#(self.n_labels[n_id]):
 				# Find slaves that assign this point the label l_id. 
 				slaves_with_this_l_id		= np.array([s_ids[i] for i in np.where(ls_ == l_id)[0]])
-				slaves_without_this_l_id	= np.setdiff1d(s_ids, slaves_with_this_l_id)
+				slaves_without_this_l_id	= np.array([s_ids[i] for i in np.where(ls_ != l_id)[0]])
 
 				# Calculate updates, given by the equation above. 
-				l_id_delta		= alpha*(1.0 - (slaves_with_this_l_id.size*1.0)/s_ids.size)
-				no_l_id_delta	= alpha*(-1.0*(slaves_without_this_l_id.size*1.0)/s_ids.size)
+				l_id_delta		= 1.0 - (slaves_with_this_l_id.size*1.0)/s_ids.size
+				no_l_id_delta	= l_id_delta - 1.0 # alpha*(-1.0*(slaves_without_this_l_id.size*1.0)/s_ids.size)
 
 				# For all slaves which assign n_id the label l_id, we apply
 				# 	the update l_id_delta for the node energy corresponding to the label l_id. 
 				# For all other slaves, we apply the update no_l_id_delta. 
 				for s_l_id in slaves_with_this_l_id:
-					self.slave_list[s_l_id].node_energies[l_id] += l_id_delta
+					self.slave_list[s_l_id].node_energies[l_id] += alpha*l_id_delta
+					# Add to the current subgradient. 
+					norm_gt += l_id_delta**2
 				for s_nl_id in slaves_without_this_l_id:
-					self.slave_list[s_nl_id].node_energies[l_id] += no_l_id_delta
+					self.slave_list[s_nl_id].node_energies[l_id] += alpha*no_l_id_delta
+					# Add to the current subgradient. 
+					norm_gt += no_l_id_delta**2
 
 				# Set flags for these slaves to True
 				slave_flags[s_ids] = True
@@ -567,6 +650,7 @@ class Lattice:
 			self.slave_list[s_1].edge_energies[e_id_s_1][lx_1][ly_1]	+= alpha/2
 			self.slave_list[s_2].edge_energies[e_id_s_2][lx_2][ly_2]	+= alpha/2
 
+			norm_gt += 4*(0.5**2)
 			# Create a matrix which records which label pairs occurred how many times
 #			label_freq_mat	= np.zeros((self.n_labels[x], self.n_labels[y]))
 #			for up in ls_:
@@ -589,6 +673,9 @@ class Lattice:
 
 		# Reset the slaves to solve. 
 		self._slaves_to_solve = np.where(slave_flags == True)[0]
+
+		# Record the norm of the subgradient. 
+		self.subgradient_norms += [norm_gt]
 
 
 	def _check_consistency(self):
@@ -629,11 +716,72 @@ class Lattice:
 		slave in its own slave list. Thus, if called without checking consistency first, or even if
 		Lattice._check_consistency() returned False, it is not guaranteed that this function
 		will return the correct labels. 
+		Also computes the primal cost for the final labelling. 
 		'''
+		# Assign labels now. 
 		for n_id in range(self.n_nodes):
 			s_id				= self.nodes_in_slaves[n_id][0]
 			self.labels[n_id]	= self.slave_list[s_id].get_node_label(n_id)
+
+		self.labels	= self.labels.astype(np.int)
+		# Compute primal cost. 
+		
+		self.primal_cost = _compute_primal_cost(labels=self.labels)
 		return self.labels
+
+
+	def _compute_dual_cost(self):
+		'''
+		Returns the dual cost at a given stage of the optimisation. 
+		The dual cost is simply the sum of all energies of the slaves. 
+		'''
+		return reduce(lambda x, y: x + y, [s._compute_energy() for s in self.slave_list], 0)
+
+
+	def _get_primal_solution(self):
+	 	'''
+		Estimate a primal solution from the obtained dual solutions. 
+		This strategy uses the most voted label for every node. 
+		'''
+		labels = np.zeros(self.n_nodes, dtype=np.int)
+
+		# Iterate over every node. 
+		for n_id in range(self.n_nodes):
+			# Retrieve the labels assigned by every slave to this node. 
+			s_labels = [self.slave_list[s].label_from_node[n_id] for s in self.nodes_in_slaves[n_id]]
+			# Find the most voted label. 
+			labels[n_id] = stats.mode(s_labels)[0][0]
+
+		# Return this labelling. 
+		return labels
+
+	def _compute_primal_cost(self, labels=None):
+		'''
+		Returns the primal cost at a given stage of the optimisation.
+		For each stage of the optimisation, this function takes the labelling from every
+		slave, and adds the part of the energy corresponding to that labelling
+		from each component of the energy function. 
+		'''
+		cost	= 0
+
+		# Generate a labelling first. 
+		if labels is None:
+			labels	= self._get_primal_solution()
+
+		# Compute node comtributions.
+		for n_id in range(self.n_nodes):
+			cost += self.node_energies[n_id][labels[n_id]]
+
+		# Compute the edge list
+		edge_list	= [self._node_ids_from_edge_id(e_id) for e_id in range(self.n_edges)]
+		# Compute edge contributions. 
+		for e_id in range(self.n_edges):
+			e = edge_list[e_id]
+			x, y = e
+			cost += self.edge_energies[e_id][labels[x]][labels[y]]
+
+		# This is the primal cost corresponding to either the input labels, or the generated ones. 
+		return cost
 
 
 	def _edge_id_from_node_ids(self, x, y):
@@ -702,10 +850,9 @@ def _compute_slave_energy(node_energies, edge_energies, labels):
 					node_energies[2][k] + node_energies[3][l]
 
 	# Add edge energies. 
-	total_e		+= edge_energies[0][i,j]
-	total_e		+= edge_energies[1][i,k]
-	total_e		+= edge_energies[2][j,l]
-	total_e		+= edge_energies[3][k,l]
+	total_e		+= edge_energies[0][i,j] + edge_energies[1][i,k] \
+				    + edge_energies[2][j,l] + edge_energies[3][k,l]
+
 	return total_e
 
 # ---------------------------------------------------------------------------------------
@@ -756,7 +903,7 @@ def _optimise_4node_slave(slave):
 	min_energy		= 4*np.max(node_energies) + 4*np.max(edge_energies)
 
 	# The optimal labelling. 
-	labels			= all_labellings[0,:]
+	labels			= np.zeros(4)
 
 	# Record energies for every labelling. 
 	for l_ in range(all_labellings.shape[0]):
@@ -764,7 +911,7 @@ def _optimise_4node_slave(slave):
 		# Check if best. 
 		if total_e < min_energy:
 			min_energy	= total_e
-			labels		= all_labellings[l_,:]
+			labels[:]	= all_labellings[l_,:]
 
 	return labels, min_energy
 # ---------------------------------------------------------------------------------------
@@ -786,7 +933,7 @@ def _update_slave_states(c):
 
 	# Sanity check. The two energies (s_min and s._energy must agree)
 	if s._energy != s_min:
-		print 'optimise_all_slaves(): Consistency error. The minimum energy returned \
+		print '_update_slave_states(): Consistency error. The minimum energy returned \
 by _optimise_4node_slave() for slave %d is %g and does not match the one computed \
 by Slave._compute_energy(), which is %g. The labels are [%d, %d, %d, %d]' \
 				%(i, s_min, s._energy, s_labels[0], s_labels[1], s_labels[2], s_labels[3])
