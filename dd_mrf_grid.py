@@ -545,9 +545,14 @@ class Lattice:
 		_to_solve	= [self.slave_list[i] for i in self._slaves_to_solve]
 		# The number of cores to use is the number of cores on the machine minus 1. 
 		n_cores		= cpu_count() - 1
+		# Use only as many cores as needed. 
+		if n_cores > len(_to_solve):
+			n_cores = len(_to_solve)
+
+		# Optimise the slaves. 
 		optima		= Parallel(n_jobs=n_cores)(delayed(_optimise_4node_slave)(s) for s in _to_solve)
 	
-		# Update the labelling in slaves. 
+		# Update labellings in slaves. 
 		result		= Parallel(n_jobs=n_cores)(delayed(_update_slave_states)(c) for c in zip(self._slaves_to_solve, _to_solve, optima))
 		success		= [result[i][0] for i in range(len(result))]
 		if False in success:
@@ -557,11 +562,7 @@ class Lattice:
 		# Reflect the result in slave list for our Lattice. 
 		for i in range(self._slaves_to_solve.size):
 			s_id = self._slaves_to_solve[i]
-			self.slave_list[s_id].node_energies = result[i][1].node_energies
-			self.slave_list[s_id].edge_energies = result[i][1].edge_energies
-			self.slave_list[s_id].set_labels(result[i][1].labels)
-			self.slave_list[s_id]._energy		= result[i][1]._energy
-#			self.slave_list[s_id]	= result[i][1]
+			self.slave_list[s_id] = result[i][1]
 
 	
 	def _apply_param_updates(self, alpha):
@@ -654,23 +655,8 @@ class Lattice:
 			self.slave_list[s_1].edge_energies[e_id_s_1][lx_1][ly_1]	+= alpha/2
 			self.slave_list[s_2].edge_energies[e_id_s_2][lx_2][ly_2]	+= alpha/2
 
+			# Add to the norm of the subgradient. 
 			norm_gt += 4*(0.5**2)
-			# Create a matrix which records which label pairs occurred how many times
-#			label_freq_mat	= np.zeros((self.n_labels[x], self.n_labels[y]))
-#			for up in ls_:
-#				lx, ly = up
-#				label_freq_mat[lx][ly] += 1
-#
-#			# Now we can make updates. 
-#			non_zero_labels	= np.where(label_freq_mat != 0)
-#			for lpairs in zip(non_zero_labels[0], non_zero_labels[1]):
-#				for s in range(s_ids.size):
-#					s_id = s_ids[s]
-#					e_id_in_slave	= np.where(self.slave_list[s_id].edge_list == e_id)[0]
-#					if ls_[s] == lpairs:
-#						self.slave_list[s_id].edge_energies[e_id_in_slave][lpairs[0],lpairs[1]] += alpha*(1.0 - label_freq_mat[lpairs[0],lpairs[1]]*1.0/s_ids.size)
-#					else:
-#						self.slave_list[s_id].edge_energies[e_id_in_slave][lpairs[0],lpairs[1]] += alpha*(-1.0*(s_ids.size - label_freq_mat[lpairs[0],lpairs[1]])/s_ids.size)
 
 			# Set flags for these slaves to True, which means they should be solved again. 
 			slave_flags[s_ids] = True
@@ -935,7 +921,7 @@ def _update_slave_states(c):
 	s.set_labels(s_labels)
 	s._compute_energy()
 
-	# Sanity check. The two energies (s_min and s._energy must agree)
+	# Sanity check. The two energies (s_min and s._energy) must agree.
 	if s._energy != s_min:
 		print '_update_slave_states(): Consistency error. The minimum energy returned \
 by _optimise_4node_slave() for slave %d is %g and does not match the one computed \
