@@ -4,7 +4,8 @@ import matplotlib.pyplot as plt
 np = ddmrf.np
 
 n_labels = 2
-lat = ddmrf.Lattice(10, 10 ,n_labels)
+grid_size = [50, 50]
+lat = ddmrf.Lattice(grid_size[0], grid_size[1],n_labels)
 
 for i in range(lat.n_nodes):
 	ne	= np.random.standard_normal(size=(n_labels,))
@@ -17,7 +18,7 @@ for e in lat._find_empty_attributes()[1]:
 
 if __name__ == '__main__':
 	lat.optimise(a_start=0.1, max_iter=5000)
-	print np.reshape(lat.labels, [10, 10])
+	print np.reshape(lat.labels, grid_size)
 	plt.plot(lat.dual_costs, 'r-')
 	plt.show()
 
