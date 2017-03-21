@@ -5,7 +5,7 @@ DD-MRF on a regular 2-D grid
 (Code not yet complete)
 
 This Python library implements the Dual Decomposition algorithm by Komodakis, Paragios, and Tziritas [1] on a regular
-2-D grid by dividing the graph into sub-problems (slaves), each sub-problem being a unique loop of four points. 
+2-D grid by dividing the graph into sub-problems (slaves), each sub-problem being a cell of four points. 
 
 Requirements
 ------------
