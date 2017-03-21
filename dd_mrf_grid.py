@@ -475,15 +475,18 @@ class Lattice:
 		self.primal_costs		= []
 		self.subgradient_norms	= []
 
+		self._best_primal_cost	= np.inf
+		self._best_dual_cost	= -np.inf
+
 		# Loop till not converged. 
 		while not converged and it <= max_iter:
 			if self._optim_strategy is 'step':
 				alpha	= a_start/np.sqrt(it)
 			elif self._optim_strategy is 'adaptive':
 				if it == 1:
-					alpha = 1
+					alpha = 1.0
 				else:
-					approx_t	= np.min(self.primal_costs)
+					approx_t	= self._best_primal_cost
 					dual_t		= self.dual_costs[-1]
 					norm_gt		= self.subgradient_norms[-1]
 					alpha		= a_start*(approx_t - dual_t)/norm_gt
@@ -515,12 +518,16 @@ class Lattice:
 
 			# Get the primal cost at this iteration
 			primal_cost		= self._compute_primal_cost()
+			if self._best_primal_cost > primal_cost:
+				self._best_primal_cost = primal_cost
 			self.primal_costs += [primal_cost]
 
 			# Get the dual cost at this iteration
 			dual_cost		= self._compute_dual_cost()
+			if self._best_dual_cost < dual_cost:
+				self._best_dual_cost = dual_cost
 			self.dual_costs	+= [dual_cost]
-			print 'Primal cost = %g. Dual cost = %g' %(primal_cost, dual_cost)
+			print 'Primal cost = %g. Dual cost = %g. Smallest gap so far = %g' %(primal_cost, dual_cost, self._best_primal_cost - self._best_dual_cost)
 
 			# Increase iteration.
 			it += 1
@@ -567,9 +574,6 @@ class Lattice:
 
 		# Compute the L2-norm of the subgradient. 
 		norm_gt	= 0.0
-
-	
-		_subgrad_norm_vec = np.zeros(self.max_n_labels)
 
 		# We iterate over all nodes and edges and calculate updates to parameters of all slaves. 
 		for n_id in range(self.n_nodes):
@@ -726,7 +730,7 @@ class Lattice:
 		self.labels	= self.labels.astype(np.int)
 		# Compute primal cost. 
 		
-		self.primal_cost = _compute_primal_cost(labels=self.labels)
+		self.primal_cost = self._compute_primal_cost(labels=self.labels)
 		return self.labels
 
 
