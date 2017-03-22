@@ -5,6 +5,7 @@
 import numpy as np
 from joblib import Parallel, delayed, cpu_count
 import scipy.stats as stats
+import matplotlib.pyplot as plt
 
 
 # The dtype to use to store energies. 
@@ -491,7 +492,7 @@ class Lattice:
 					norm_gt		= self.subgradient_norms[-1]
 					alpha		= a_start*(approx_t - dual_t)/norm_gt
 
-			print 'Iteration %d. %d subproblems to be solved. Optimising ...' %(it, self._slaves_to_solve.size),
+			print 'Iteration %d. Solving %d subproblems ...' %(it, self._slaves_to_solve.size),
 			# Solve all the slaves. 
 			# The following optimises the energy for each slave, and stores the 
 			#    resulting labelling as a member in the slaves. 
@@ -509,13 +510,6 @@ class Lattice:
 				converged = True
 				break
 
-			# Find the number of disagreeing points. 
-			disagreements = self._find_disagreeing_nodes()
-			print ' alpha = %g. n_miss = %d.' %(alpha, disagreements.size),
-
-			# Apply updates to parameters of each slave. 
-			self._apply_param_updates(alpha)
-
 			# Get the primal cost at this iteration
 			primal_cost		= self._compute_primal_cost()
 			if self._best_primal_cost > primal_cost:
@@ -527,7 +521,15 @@ class Lattice:
 			if self._best_dual_cost < dual_cost:
 				self._best_dual_cost = dual_cost
 			self.dual_costs	+= [dual_cost]
-			print 'Primal cost = %g. Dual cost = %g. Smallest gap so far = %g' %(primal_cost, dual_cost, self._best_primal_cost - self._best_dual_cost)
+
+			# Apply updates to parameters of each slave. 
+			alpha = self._apply_param_updates(a_start, it)
+
+			# Find the number of disagreeing points. 
+			disagreements = self._find_disagreeing_nodes()
+			print ' alpha = %g. n_miss = %d.' %(alpha, disagreements.size),
+			print '||dg||**2 = %g, PRIMAL = %g. DUAL = %g, P - D = %g, min(P - D) = %g' \
+				%(self.subgradient_norms[-1], primal_cost, dual_cost, primal_cost-dual_cost, self._best_primal_cost - self._best_dual_cost)
 
 			# Increase iteration.
 			it += 1
@@ -551,21 +553,27 @@ class Lattice:
 
 		# Optimise the slaves. 
 		optima		= Parallel(n_jobs=n_cores)(delayed(_optimise_4node_slave)(s) for s in _to_solve)
-	
-		# Update labellings in slaves. 
-		result		= Parallel(n_jobs=n_cores)(delayed(_update_slave_states)(c) for c in zip(self._slaves_to_solve, _to_solve, optima))
-		success		= [result[i][0] for i in range(len(result))]
-		if False in success:
-			print 'Update of slave states failed for ',
-			print np.where(success == False)[0]
-			raise AssertionError
+
 		# Reflect the result in slave list for our Lattice. 
 		for i in range(self._slaves_to_solve.size):
 			s_id = self._slaves_to_solve[i]
-			self.slave_list[s_id] = result[i][1]
+			self.slave_list[s_id].set_labels(optima[i][0])
+			self.slave_list[s_id]._compute_energy()
+	
+		# Update labellings in slaves. 
+#		result		= Parallel(n_jobs=n_cores)(delayed(_update_slave_states)(c) for c in zip(self._slaves_to_solve, _to_solve, optima))
+#		success		= [result[i][0] for i in range(len(result))]
+#		if False in success:
+#			print 'Update of slave states failed for ',
+#			print np.where(success == False)[0]
+#			raise AssertionError
+		# Reflect the result in slave list for our Lattice. 
+#		for i in range(self._slaves_to_solve.size):
+#			s_id = self._slaves_to_solve[i]
+#			self.slave_list[s_id] = result[i][1]
 
 	
-	def _apply_param_updates(self, alpha):
+	def _apply_param_updates(self, a_start, it):
 		'''
 		Apply updates to energies after one iteration of the DD-MRF algorithm. 
 		'''
@@ -575,6 +583,19 @@ class Lattice:
 
 		# Compute the L2-norm of the subgradient. 
 		norm_gt	= 0.0
+
+		# We first mark which updates need to be done. They 
+		# 	are only applied at the end, all at once. 
+		# These variables store the required updates. 
+		# Each element in node_updates is a list of length four:
+		#       [slave_id, node_id, label, update].
+		# The first element indicates which slave to update, the second and third
+		#   indicate the node and label whose energy gets the update, and the fourth
+		#   is the update itself. 
+		# Similarly, an edge update consists of five values:
+		#       [slave_id, edge_id, label_1, label_2, update]
+		node_updates = []
+		edge_updates = []
 
 		# We iterate over all nodes and edges and calculate updates to parameters of all slaves. 
 		for n_id in range(self.n_nodes):
@@ -605,17 +626,30 @@ class Lattice:
 				l_id_delta		= 1.0 - (slaves_with_this_l_id.size*1.0)/s_ids.size
 				no_l_id_delta	= l_id_delta - 1.0 # alpha*(-1.0*(slaves_without_this_l_id.size*1.0)/s_ids.size)
 
+				# Mark the l_id_delta update ...
+				_node_up = [[s_l_id, self.slave_list[s_l_id].node_map[n_id], l_id, l_id_delta] for s_l_id in slaves_with_this_l_id]
+				node_updates += _node_up
+				#   ... and the no_l_id_delta update. 
+				_node_up = [[s_nl_id, self.slave_list[s_nl_id].node_map[n_id], l_id, no_l_id_delta] for s_nl_id in slaves_without_this_l_id]
+				node_updates += _node_up
+
+				# Add these updates to the L2 norm of the subgradient. 
+				norm_gt += len(slaves_with_this_l_id)*(l_id_delta**2)
+				norm_gt += len(slaves_without_this_l_id)*(no_l_id_delta**2)
+
 				# For all slaves which assign n_id the label l_id, we apply
 				# 	the update l_id_delta for the node energy corresponding to the label l_id. 
 				# For all other slaves, we apply the update no_l_id_delta. 
-				for s_l_id in slaves_with_this_l_id:
-					self.slave_list[s_l_id].node_energies[l_id] += alpha*l_id_delta
-					# Add to the current subgradient. 
-					norm_gt += l_id_delta**2
-				for s_nl_id in slaves_without_this_l_id:
-					self.slave_list[s_nl_id].node_energies[l_id] += alpha*no_l_id_delta
-					# Add to the current subgradient. 
-					norm_gt += no_l_id_delta**2
+#				for s_l_id in slaves_with_this_l_id:
+#					n_id_in_s = self.slave_list[s_l_id].node_map[n_id]
+#					self.slave_list[s_l_id].node_energies[n_id_in_s][l_id] += alpha*l_id_delta
+#					# Add to the current subgradient. 
+#					norm_gt += l_id_delta**2
+#				for s_nl_id in slaves_without_this_l_id:
+#					n_id_in_s = self.slave_list[s_nl_id].node_map[n_id]
+#					self.slave_list[s_nl_id].node_energies[n_id_in_s][l_id] += alpha*no_l_id_delta
+#					# Add to the current subgradient. 
+#					norm_gt += no_l_id_delta**2
 
 				# Set flags for these slaves to True
 				slave_flags[s_ids] = True
@@ -649,14 +683,23 @@ class Lattice:
 			e_id_s_1	= self.slave_list[s_1].edge_map[e_id]
 			e_id_s_2	= self.slave_list[s_2].edge_map[e_id]
 
-			self.slave_list[s_1].edge_energies[e_id_s_1][lx_2][ly_2]	-= alpha/2
-			self.slave_list[s_2].edge_energies[e_id_s_2][lx_1][ly_1]	-= alpha/2
-
-			self.slave_list[s_1].edge_energies[e_id_s_1][lx_1][ly_1]	+= alpha/2
-			self.slave_list[s_2].edge_energies[e_id_s_2][lx_2][ly_2]	+= alpha/2
+			# Mark updates. 
+			_edge_up = [[s_1, e_id_s_1, lx_2, ly_2, -0.5]]
+			_edge_up += [[s_2, e_id_s_2, lx_1, ly_1, -0.5]]
+			_edge_up += [[s_1, e_id_s_1, lx_1, ly_1, 0.5]]
+			_edge_up += [[s_2, e_id_s_2, lx_2, ly_2, 0.5]]
 
 			# Add to the norm of the subgradient. 
 			norm_gt += 4*(0.5**2)
+
+#			self.slave_list[s_1].edge_energies[e_id_s_1][lx_2][ly_2]	-= alpha/2
+#			self.slave_list[s_2].edge_energies[e_id_s_2][lx_1][ly_1]	-= alpha/2
+#
+#			self.slave_list[s_1].edge_energies[e_id_s_1][lx_1][ly_1]	+= alpha/2
+#			self.slave_list[s_2].edge_energies[e_id_s_2][lx_2][ly_2]	+= alpha/2
+#
+#			# Add to the norm of the subgradient. 
+#			norm_gt += 4*(0.5**2)
 
 			# Set flags for these slaves to True, which means they should be solved again. 
 			slave_flags[s_ids] = True
@@ -666,6 +709,35 @@ class Lattice:
 
 		# Record the norm of the subgradient. 
 		self.subgradient_norms += [norm_gt]
+
+		# Compute the alpha for this step. 
+		if self._optim_strategy is 'step':
+			alpha	= a_start/np.sqrt(it)
+		elif self._optim_strategy is 'adaptive':
+			approx_t	= self._best_primal_cost
+			dual_t		= self.dual_costs[-1]
+			alpha		= a_start*(approx_t - dual_t)/norm_gt
+
+		# Perform the marked updates. 
+		# Node updates. 
+		for _n_up in node_updates:
+			s_id, n_id, l_id, _delta = _n_up
+#			print 'Update %g to label %d of node %d in slave %d.' %(_delta, l_id, n_id, s_id)
+			self.slave_list[s_id].node_energies[n_id][l_id] += alpha*_delta
+		# Edge updates. 
+		for _e_up in edge_updates:
+			s_id, e_id, l_1, l_2, _delta = _e_up
+#			print 'Update %g to labels (%d, %d) of edge %d in slave %d.' %(_delta, l_1, l_2, e_id, s_id)
+			self.slave_list[s_id].edge_energies[e_id][l_1][l_2] += alpha*_delta
+		return alpha
+
+
+	def plot_costs(self):
+		f = plt.figure()
+		pc, = plt.plot(self.primal_costs, 'r-', label='PRIMAL')
+		dc, = plt.plot(self.dual_costs, 'b-', label='DUAL')
+		plt.legend(handles=[pc, dc])
+
 
 
 	def _check_consistency(self):
@@ -740,21 +812,18 @@ class Lattice:
 			# Retrieve the labels assigned by every slave to this node. 
 			s_labels = [self.slave_list[s].label_from_node[n_id] for s in self.nodes_in_slaves[n_id]]
 			# Find the most voted label. 
-			labels[n_id] = stats.mode(s_labels)[0][0]
+			labels[n_id] = np.int(stats.mode(s_labels)[0][0])
 
 		# Return this labelling. 
 		return labels
 
 	def _compute_primal_cost(self, labels=None):
 		'''
-		Returns the primal cost at a given stage of the optimisation.
-		For each stage of the optimisation, this function takes the labelling from every
-		slave, and adds the part of the energy corresponding to that labelling
-		from each component of the energy function. 
+		Returns the primal cost given a labelling. 
 		'''
 		cost	= 0
 
-		# Generate a labelling first. 
+		# Generate a labelling first, if not specified. 
 		if labels is None:
 			labels	= self._get_primal_solution()
 
