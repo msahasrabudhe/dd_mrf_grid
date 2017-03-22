@@ -736,8 +736,8 @@ class Lattice:
 		f = plt.figure()
 		pc, = plt.plot(self.primal_costs, 'r-', label='PRIMAL')
 		dc, = plt.plot(self.dual_costs, 'b-', label='DUAL')
-		plt.legend(handles=[pc, dc])
-
+		plt.legend([pc, dc], ['PRIMAL', 'DUAL'])
+		plt.show()
 
 
 	def _check_consistency(self):
