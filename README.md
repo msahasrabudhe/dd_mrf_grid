@@ -1,11 +1,12 @@
 # dd_mrf_grid
 
+(code not yet complete)
+
 DD-MRF on a regular 2-D grid
 ============================
-(Code not yet complete)
 
 This Python library implements the Dual Decomposition algorithm by Komodakis, Paragios, and Tziritas [1] on a regular
-2-D grid by dividing the graph into sub-problems (slaves), each sub-problem being a unique loop of four points. 
+2-D grid by dividing the graph into sub-problems (slaves), each sub-problem being a cell of four points. 
 
 Requirements
 ------------
@@ -37,8 +38,7 @@ lat.set_node_energies(i, E_node)
 lat.set_edge_energies(i, j, E_edge)
 ```
 where `i` and `j` are node indices, and `E_node` and `E_edge` are, respectively, the node and edge energies. `E_node` 
-must have `n_labels[i]` elements, while `E_edge` must have shape `(n_labels[x], n_labels[y])`, where `x` and `y` are 
-defined as `x, y = min(i,j), max(i,j)`.
+must have `n_labels[i]` elements, while `E_edge` must have shape `(n_labels[i], n_labels[j])`.
 
 All nodes and edges must be assigned energies before the overall energy can be minimised. To verify whether all 
 energies have been defined, use
