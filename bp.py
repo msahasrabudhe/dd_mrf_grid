@@ -4,7 +4,6 @@ import numpy as np
 
 def max_prod_bp(node_pot, edge_pot, graph_struct):
 	adj_mat			= graph_struct['adj_mat']
-	neighbours		= graph_struct['neighbours']
 	n_nodes			= graph_struct['n_nodes']
 	n_edges			= graph_struct['n_edges']
 	edge_ends		= graph_struct['edge_ends']
@@ -21,11 +20,14 @@ def max_prod_bp(node_pot, edge_pot, graph_struct):
 	# Copy the adjacency matrix. 
 	adj_mat_copy = np.zeros_like(adj_mat)
 	adj_mat_copy[:] = adj_mat[:]
+	# Copy the node degrees. 
+	node_degrees_copy		= np.zeros_like(node_degrees)
+	node_degrees_copy[:]	= node_degrees
 
 	# Stage I: Propagate from leaves to root. 
 
 	# Find leaf nodes. 
-	queue = np.where(node_degrees == 1)[0].tolist()
+	queue = np.where(node_degrees_copy == 1)[0].tolist()
 
 	# Record if node is already visited. 
 	visited = np.zeros(n_nodes, dtype=np.bool)
@@ -63,8 +65,8 @@ def max_prod_bp(node_pot, edge_pot, graph_struct):
 		path = [[_from, _to]] + path
 
 		# Update node degrees by removing this edge. 
-		node_degrees[_from]	-= 1
-		node_degrees[_to]	-= 1
+		node_degrees_copy[_from]	-= 1
+		node_degrees_copy[_to]	-= 1
 		# Update adj_mat by removing this edge. 
 		adj_mat_copy[_from, _to] = False
 		adj_mat_copy[_to, _from] = False
@@ -98,11 +100,11 @@ def max_prod_bp(node_pot, edge_pot, graph_struct):
 
 		# If the degree of the node _to is 0, it is supposed to be the root. 
 		# We break from the while loop
-		if node_degrees[_to] == 0:
+		if node_degrees_copy[_to] == 0:
 			_root = _to
 			break
 		# If the degree of the node _to is 1, insert it to the end of the queue. 
-		if node_degrees[_to] == 1:
+		if node_degrees_copy[_to] == 1:
 			queue += [_to]
 	# Make sure that queue is empty after we break. 
 
@@ -149,15 +151,6 @@ def max_prod_bp(node_pot, edge_pot, graph_struct):
 	return labels, messages
 
 
-def bp(node_pot, edge_pot, graph_struct):
-	n_nodes		= graph_struct['n_nodes']
-	n_states	= graph_struct['n_states']
-	n_edges		= graph_struct['n_edges']
-	edge_ends	= graph_struct['edge_ends']
-	e_ids		= graph_struct['e_ids']
-
-
-
 def make_graph_struct(adj_mat, n_states):
 	''' 
 	Make graph struct from adjacency matrix.
@@ -166,9 +159,6 @@ def make_graph_struct(adj_mat, n_states):
 	'''
 	# Number of nodes in the graph.
 	n_nodes = adj_mat.shape[0]
-
-	# List of neighbours for every node. 
-	neighbours = [np.where(adj_mat[t,:] == True)[0] for t in range(n_nodes)]
 
 	# Number of edges in the graph. 
 	n_edges = np.sum(adj_mat)/2
@@ -196,12 +186,13 @@ def make_graph_struct(adj_mat, n_states):
 
 	if type(n_states) is int:
 		n_states = n_states*np.ones(n_nodes, dtype=np.int)
+	else:
+		n_states = np.array(n_states, dtype=np.int)
 
 	graph_struct 				= {}
 	graph_struct['n_nodes'] 	= n_nodes
 	graph_struct['n_edges'] 	= n_edges
 	graph_struct['adj_mat'] 	= adj_mat
-	graph_struct['neighbours']	= neighbours
 	graph_struct['edge_ends']	= edge_ends
 	graph_struct['e_ids'] 		= e_ids
 	graph_struct['node_degrees'] = node_degrees
