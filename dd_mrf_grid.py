@@ -347,6 +347,13 @@ class Lattice:
 		The default decomposition is 'cell'. If 'row_col' is specified, create a set of trees
 		instead - one for every row and every column. 
 		'''
+
+		# self._max_nodes_in_slaves, and self._max_edges_in_slaves are used
+		#   to simplify node and edge updates. They shall be computed by the
+		#   _create_*_slaves() functions, whichever is called. 
+		self._max_nodes_in_slave = 0 
+		self._max_edges_in_slave = 0
+
 		if decomposition is 'cell':
 			self._create_cell_slaves()
 		elif decomposition is 'row_col':
@@ -457,6 +464,12 @@ class Lattice:
 			for e_id in edge_list:
 				self.edges_in_slaves[e_id]	+= [s_id]
 
+			# Update self._max_nodes_in_slave and self._max_edges_in_slave
+			if node_list.size > self._max_nodes_in_slave:
+				self._max_nodes_in_slave = node_list.size
+			if edge_list.size > self._max_edges_in_slave:
+				self._max_edges_in_slave = edge_list.size
+
 		# For convenience, turn the individual lists in nodes_in_slaves and edges_in_slaves into numpy arrays. 
 		self.nodes_in_slaves	= [np.array(t) for t in self.nodes_in_slaves]
 		self.edges_in_slaves	= [np.array(t) for t in self.edges_in_slaves]
@@ -554,6 +567,12 @@ class Lattice:
 					# This is the first time these edges are being assigned to a slave. 
 					self.edges_in_slaves[e_id][0]	= s_id
 
+				# Update self._max_nodes_in_slave and self._max_edges_in_slave
+				if node_list.size > self._max_nodes_in_slave:
+					self._max_nodes_in_slave = node_list.size
+				if edge_list.size > self._max_edges_in_slave:
+					self._max_edges_in_slave = edge_list.size
+
 			else:
 			# Create column slaves. 	
 				node_list	= np.arange(0, self.rows)*self.cols + s_id-self.rows
@@ -597,6 +616,12 @@ class Lattice:
 				for e_id in edge_list:
 					# This is the first time these edges are being assigned to a slave. 
 					self.edges_in_slaves[e_id][0]	= s_id
+
+				# Update self._max_nodes_in_slave and self._max_edges_in_slave
+				if node_list.size > self._max_nodes_in_slave:
+					self._max_nodes_in_slave = node_list.size
+				if edge_list.size > self._max_edges_in_slave:
+					self._max_edges_in_slave = edge_list.size
 
 		# For convenience, turn the individual lists in nodes_in_slaves and edges_in_slaves into numpy arrays. 
 		self.nodes_in_slaves	= [np.array(t) for t in self.nodes_in_slaves]
@@ -660,8 +685,8 @@ class Lattice:
 
 		# Create update variables for slaves. Created once, reset to zero each time
 		#   _apply_param_updates() is called. 
-		self._slave_node_up	= np.zeros((self.n_slaves, 4, self.max_n_labels))
-		self._slave_edge_up	= np.zeros((self.n_slaves, 4, self.max_n_labels*self.max_n_labels))
+		self._slave_node_up	= np.zeros((self.n_slaves, self._max_nodes_in_slave, self.max_n_labels))
+		self._slave_edge_up	= np.zeros((self.n_slaves, self._max_edges_in_slave, self.max_n_labels*self.max_n_labels))
 		# Array to mark slaves for updates. 
 		# The first row corresponds to node updates, while the second to edge updates. 
 		self._mark_sl_up	= np.zeros((2,self.n_slaves), dtype=np.bool)
@@ -986,14 +1011,16 @@ class Lattice:
 		for s_id in self._slaves_to_solve:
 			if self._mark_sl_up[0, s_id]:
 				# Node updates have been marked. 
-				self.slave_list[s_id].node_energies = [self.slave_list[s_id].node_energies[n] + alpha*self._slave_node_up[s_id, n, :] for n in range(4)]
+				n_nodes_this_slave = self.slave_list[s_id].node_list.size
+				self.slave_list[s_id].node_energies = [self.slave_list[s_id].node_energies[n] + alpha*self._slave_node_up[s_id, n, :] for n in range(n_nodes_this_slave)]
 #				for n in range(4):
 #					n_id = self.slave_list[s_id].node_list[n]
 #					self.slave_list[s_id].node_energies[n] += alpha*self._slave_node_up[s_id, n, 0:self.n_labels[n_id]]
 			if self._mark_sl_up[1, s_id]:
 			 	# Edge updates have been marked. 
+				n_edges_this_slave = self.slave_list[s_id].edge_list.size
 				self.slave_list[s_id].edge_energies = [self.slave_list[s_id].edge_energies[n] + 
-								alpha*np.reshape(self._slave_edge_up[s_id, n, :], [self.n_labels[0],-1]) for n in range(4)]
+								alpha*np.reshape(self._slave_edge_up[s_id, n, :], [self.n_labels[0],-1]) for n in range(n_edges_this_slave)]
 #			  	for e_id in range(4):
 #					x, y = self._node_ids_from_edge_id(self.slave_list[s_id].edge_list[e_id])
 #					lx = self.n_labels[x]
