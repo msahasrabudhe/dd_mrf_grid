@@ -282,7 +282,7 @@ class Lattice:
 			raise ValueError
 
 		# Make the assignment: set the node energies. 
-		self.node_energies[i][:self.n_labels[i]] = energies
+		self.node_energies[i, 0:self.n_labels[i]] = energies
 		# Set flag for this node to True.
 		self.node_flags[i]		= True
 
@@ -434,7 +434,7 @@ class Lattice:
 	
 			# The node energies for this slave
 			node_energies	= np.zeros((4, self.max_n_labels), dtype=e_dtype) 
-			node_energies[:] = self.node_energies[node_list[i],:]
+			node_energies[:] = self.node_energies[node_list,:]
 	
 			# We now extract the edge energies, which are easy to extract as well, as we know
 			# 	the edge IDs for all edges in this slave. 
@@ -444,7 +444,7 @@ class Lattice:
 							    (n_labels[1], n_labels[3]), \
 							    (n_labels[2], n_labels[3])]
 			edge_energies    = np.zeros((4, self.max_n_labels, self.max_n_labels), dtype=e_dtype)
-			edge_energies[:] = self.edge_energies[edge_list[i]][:]
+			edge_energies[:] = self.edge_energies[edge_list,:,:]
 	
 			# Make assignments for this slave. 
 			self.slave_list[s_id].set_params(node_list, edge_list, node_energies, n_labels, edge_energies, None, 'cell')
@@ -1096,9 +1096,14 @@ class Lattice:
 		# Iterate over every node. 
 		for n_id in range(self.n_nodes):
 			# Retrieve the labels assigned by every slave to this node. 
-			s_labels = [self.slave_list[s].label_from_node[n_id] for s in self.nodes_in_slaves[n_id]]
+			s_ids    = self.nodes_in_slaves[n_id]
+			s_labels = [self.slave_list[s].label_from_node[n_id] for s in s_ids]
+			n_in_sls = [self.slave_list[s].node_map[n_id] for s in s_ids]
+			lbl_ergs = [self.slave_list[s_ids[i]].node_energies[n_in_sls[i]][s_labels[i]] for i in range(s_ids.size)]
 			# Find the most voted label. 
-			labels[n_id] = np.int(stats.mode(s_labels)[0][0])
+#			labels[n_id] = np.int(stats.mode(s_labels)[0][0])
+			# Find the label with the lower unary, amonst all slaves. 
+			labels[n_id] = s_labels[np.argmin(lbl_ergs)]
 
 		# Return this labelling. 
 		return labels
