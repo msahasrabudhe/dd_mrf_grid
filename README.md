@@ -49,8 +49,11 @@ lat.check_completeness()
 
 A complete grid can be optimised using 
 ```python
-lat.optimise(a_start=1.0)
+lat.optimise(a_start=1.0, max_iter=1000, strategy='adaptive', decomposition='row_col')
 ```
+`strategy` specifies the strategy of choosing alpha at every iteration (see paper). Accepted values are
+`'step'` and `'adaptive'`. `decomposition` specifies which graph-decomposition to use. Accepted values are
+`'cell'` and `'row_col'`. 
  
 After the algorithm converges, the obtained labelling is stored in `lat.labels`. 
 
