@@ -57,6 +57,8 @@ lat.optimise(a_start=1.0, max_iter=1000, strategy='adaptive', decomposition='row
  
 After the algorithm converges, the obtained labelling is stored in `lat.labels`. 
 
+Primal and dual costs can be plotted with `lat.plot_costs()`.
+
 References
 ----------
 [1] MRF Energy Minimization and Beyond via Dual Decomposition, N. Komodakis, N. Paragios and G. Tziritas, PAMI 2011. 
