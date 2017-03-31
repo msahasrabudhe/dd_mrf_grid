@@ -3,6 +3,7 @@
 #	that is, the smallest loops of four vertices (nodes) forming a square. 
 
 import numpy as np
+import multiprocessing
 from joblib import Parallel, delayed, cpu_count
 import scipy.stats as stats
 import matplotlib.pyplot as plt
@@ -676,7 +677,7 @@ class Lattice:
 
 		# Loop till not converged. 
 		while not converged and it <= max_iter:
-			print 'Iteration %d. Solving %d subproblems ...' %(it, self._slaves_to_solve.size),
+			print 'Iteration %5d. Solving %5d subproblems ...' %(it, self._slaves_to_solve.size),
 			# Solve all the slaves. 
 			# The following optimises the energy for each slave, and stores the 
 			#    resulting labelling as a member in the slaves. 
@@ -712,9 +713,16 @@ class Lattice:
 
 			# Find the number of disagreeing points. 
 			disagreements = self._find_disagreeing_nodes()
-			print ' alpha = %g. n_miss = %d.' %(alpha, disagreements.size),
-			print '||dg||**2 = %g, PRIMAL = %g. DUAL = %g, P - D = %g, min(P - D) = %g' \
+			print ' alpha = %10.6f. n_miss = %6d.' %(alpha, disagreements.size),
+			print '||dg||**2 = %4.2f, PRIMAL = %6.6f. DUAL = %6.6f, P - D = %6.6f, min(P - D) = %6.6f' \
 				%(self.subgradient_norms[-1], primal_cost, dual_cost, primal_cost-dual_cost, self._best_primal_cost - self._best_dual_cost)
+
+			# Test: #TODO
+			# Switch to step strategy if n_miss = disagreements.size < 5% of number of nodes. 
+			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.05*self.n_nodes:
+				print 'Switching to step strategy as n_miss < 5% of the number of nodes'
+				a_start = alpha
+				self._optim_strategy = 'step'
 
 			# Increase iteration.
 			it += 1
@@ -737,7 +745,11 @@ class Lattice:
 			n_cores = len(_to_solve)
 
 		# Optimise the slaves. 
+		# Using Joblib. 
 		optima		= Parallel(n_jobs=n_cores)(delayed(_optimise_slave)(s) for s in _to_solve)
+		# Using Multiprocessing
+#		_multp = multiprocessing.Pool(n_cores)
+#		optima = _multp.map(_optimise_slave, _to_solve)
 # --- Comment the previous line, and uncomment the following three lines if you wish to solve
 # ---   the slaves sequentially instead of parallelly.
 #		optima = []
@@ -775,59 +787,211 @@ class Lattice:
 		# Mark which slaves need updates. A slave s_id needs update only if self._slave_node_up[s_id] 
 		#   has non-zero values in the end.
 		self._mark_sl_up[:]	= False
-
-		# Distribute the computation of node and edge updates, as they can be done independantly. 
-		n_cores = cpu_count() - 1
-
-		# Collect node updates in node_updates, as returned by _compute_node_updates().
-		# Create input list first. 
-		_node_up_inputs = [[i, self.nodes_in_slaves[i], self.slave_list[self.nodes_in_slaves[i]], self.n_labels[i]]
-		        for i in range(self.n_nodes) if self._n_slaves_nodes[i] > 1]
-		# Distribute.
-		node_updates = Parallel(n_jobs=n_cores)(delayed(_compute_node_updates)(i) for i in _node_up_inputs)
-
-		# Collect edge updates in edge_updates, as returned by _compute_edge_updates(). 
-		# Create input list first. 
-		_edge_up_inputs = [[e, self.nodes_in_slaves[e], self.slave_list[self.nodes_in_slaves[e]], self._node_ids_from_edge_id(e), 
-		                   [self.n_labels[self._node_ids_from_edge_id(e)[0]], self.n_labels[self._node_ids_from_edge_id(e)[1]]]]
-						   for e in range(self.n_edges) if self._n_slaves_edges[e] > 1]
-		# Distribute only if there are shared edges (some decompositions, for example, row_col, do not have any shared edges).
-		if len(_edge_up_inputs) > 0:
-			edge_updates = Parallel(n_jobs=n_cores)(delayed(_compute_edge_updates(i)) for i in _edge_up_inputs)
-
-		# Now store obtained values in self._slave_node_up, and self._slave_edge_up. 
-		# Meanwhile, also compute the total subgradient. 
-		for _nu in range(len(node_updates)):
-			_node_ret = node_updates[_nu]
-			# Check if any updates need to be made.
-			if not _node_ret[0]: 
+	
+		# We iterate over all nodes and edges and calculate updates to parameters of all slaves. 
+		for n_id in range(self.n_nodes):
+			# Retrieve the list of slaves that use this node. 
+			s_ids			= self.nodes_in_slaves[n_id]
+			n_slaves_nid	= s_ids.size
+			# If there is only one such slave, we have nothing to do. 
+			if n_slaves_nid == 1:
 				continue
-
-			_node_in  = _node_up_inputs[_nu]
-
-			# Record slave updates. 
-			self._slave_node_up[_node_in[1], _node_ret[2], 0:n_labels[n_id]] = _node_ret[1]
-			# Add subgradient.
-			norm_gt += _node_ret[3]
-			# Mark updates. 
-			self._mark_sl_up[0, _node_in[1]] = True
-		
-		# Do the same for edge updates. 
-		for _eu in range(len(edge_updates)):
-			_edge_ret = edge_updates[_eu]
-			# Check if any updates need to be done. 
-			if not _edge_ret[0]:
+	
+			# Retrieve labels assigned to this point by each slave, and make it into a one-hot vector. 
+	#			ls_		= [self.slave_list[s].get_node_label(n_id) for s in s_ids]
+			ls_		= np.array([make_one_hot(self.slave_list[s].get_node_label(n_id), self.n_labels[n_id]) for s in s_ids])
+			ls_avg_	= np.mean(ls_, axis=0)
+	
+			# Check if all labellings for this node agree. 
+			if np.max(ls_avg_) == 1:
+				# As all vectors are one-hot, this condition being true implies that 
+				#   all slaves assigned the same label to this node (otherwise, the maximum
+				#   number in ls_avg_ would be less than 1).
 				continue
+	
+			# The next step was to iterate over all slaves. We calculate the subgradient here
+			#   given by 
+			#   
+			#    \delta_\lambda^s_p = x^s_p - ls_avg_
+			#
+			#   for all s. s here signifies slaves. 
+			# This can be very easily done with array operations!
+			_node_up	= ls_ - np.tile(ls_avg_, [n_slaves_nid, 1])
+	
+			# Find the node ID for n_id in each slave in s_ids. 
+			sl_nids = [self.slave_list[s].node_map[n_id] for s in s_ids]
+	
+			# Mark this update to be done later. 
+			self._slave_node_up[s_ids, sl_nids, :self.n_labels[n_id]]  = _node_up #:self.n_labels[n_id]] = _node_up
+			# Add this value to the subgradient. 
+			norm_gt	+= np.sum(_node_up**2)
+			# Mark this slave for node updates. 
+			self._mark_sl_up[0, s_ids] = True
+	
+			# Iterate over all labels. The update to the energy of label l_id is given by
+			#
+			#		\delta_l_id	= \alpha*(x_s(l_id) - \frac{\sum_s' x_s'(l_id)}{\sum_s' 1})
+			#
+	#			for l_id in np.unique(ls_):#(self.n_labels[n_id]):
+	#				# Find slaves that assign this point the label l_id. 
+	#				slaves_with_this_l_id		= np.array([s_ids[i] for i in np.where(ls_ == l_id)[0]])
+	#				slaves_without_this_l_id	= np.array([s_ids[i] for i in np.where(ls_ != l_id)[0]])
+	#
+	#				# Calculate updates, given by the equation above. 
+	#				l_id_delta		= 1.0 - (slaves_with_this_l_id.size*1.0)/s_ids.size
+	#				no_l_id_delta	= l_id_delta - 1.0 # alpha*(-1.0*(slaves_without_this_l_id.size*1.0)/s_ids.size)
+	#
+	#				# Mark the l_id_delta update ...
+	#				_node_up = [[s_l_id, self.slave_list[s_l_id].node_map[n_id], l_id, l_id_delta] for s_l_id in slaves_with_this_l_id]
+	#				node_updates += _node_up
+	#				#   ... and the no_l_id_delta update. 
+	#				_node_up = [[s_nl_id, self.slave_list[s_nl_id].node_map[n_id], l_id, no_l_id_delta] for s_nl_id in slaves_without_this_l_id]
+	#				node_updates += _node_up
+	#
+	#				# Add these updates to the L2 norm of the subgradient. 
+	#				norm_gt += len(slaves_with_this_l_id)*(l_id_delta**2)
+	#				norm_gt += len(slaves_without_this_l_id)*(no_l_id_delta**2)
+	
+				# For all slaves which assign n_id the label l_id, we apply
+				# 	the update l_id_delta for the node energy corresponding to the label l_id. 
+				# For all other slaves, we apply the update no_l_id_delta. 
+	#				for s_l_id in slaves_with_this_l_id:
+	#					n_id_in_s = self.slave_list[s_l_id].node_map[n_id]
+	#					self.slave_list[s_l_id].node_energies[n_id_in_s][l_id] += alpha*l_id_delta
+	#					# Add to the current subgradient. 
+	#					norm_gt += l_id_delta**2
+	#				for s_nl_id in slaves_without_this_l_id:
+	#					n_id_in_s = self.slave_list[s_nl_id].node_map[n_id]
+	#					self.slave_list[s_nl_id].node_energies[n_id_in_s][l_id] += alpha*no_l_id_delta
+	#					# Add to the current subgradient. 
+	#					norm_gt += no_l_id_delta**2
+	
+				# Set flags for these slaves to True
+	
+		# That completes the updates for node energies. Now we move to edge energies. 
+		for e_id in range(self.n_edges):
+			# Retrieve the list of slaves that use this edge. 
+			s_ids			= self.edges_in_slaves[e_id]
+			n_slaves_eid	= s_ids.size
+			# If there is only one such slave, we have nothing to do. 
+			if n_slaves_eid == 1:
+				continue
+	
+			# Retrieve labellings of this edge, assigned by each slave.
+			x, y	= self._node_ids_from_edge_id(e_id)
+			ls_		= np.array([
+						make_one_hot([self.slave_list[s].get_node_label(x), self.slave_list[s].get_node_label(y)], self.n_labels[x], self.n_labels[y]) 
+						for s in s_ids])
+			ls_avg_	= np.mean(ls_, axis=0)
+	
+			# Check if all labellings for this node agree. 
+			if np.max(ls_avg_) == 1:
+				# As all vectors are one-hot, this condition being true implies that 
+				#   all slaves assigned the same label to this node (otherwise, the maximum
+				#   number in ls_avg_ would be less than 1).
+				continue
+	
+			# The next step was to iterate over all slaves. We calculate the subgradient here
+			#   given by 
+			#   
+			#    \delta_\lambda^s_p = x^s_p - ls_avg_
+			#
+			#   for all s. s here signifies slaves. 
+			# This can be very easily done with array operations!
+			_edge_up	= ls_ - np.tile(ls_avg_, [n_slaves_eid, 1])
+	
+			# Find the node ID for n_id in each slave in s_ids. 
+			sl_eids = [self.slave_list[s].edge_map[e_id] for s in s_ids]
+	
+			# Mark this update to be done later. 
+			self._slave_edge_up[s_ids, sl_eids, :self.n_labels[x]*self.n_labels[y]] = _edge_up #:self.n_labels[x]*self.n_labels[y]] = _edge_up
+			# Add this value to the subgradient. 
+			norm_gt	+= np.sum(_edge_up**2)
+			# Mark this slave for edge updates. 
+			self._mark_sl_up[1, s_ids] = True
 
-			_edge_in = _edge_up_inputs[_eu]
+#			# If we reach this stage, we have an edge shared between two trees, with both of them
+#			#    assigning it different labels. A little bit of hard-coding goes a long way in improving 
+#			#    performance. 
+#			lx_1, ly_1	= ls_[0]
+#			lx_2, ly_2	= ls_[1]
+#
+#			s_1	= s_ids[0]
+#			s_2	= s_ids[1]
+#
+#			e_id_s_1	= self.slave_list[s_1].edge_map[e_id]
+#			e_id_s_2	= self.slave_list[s_2].edge_map[e_id]
+#
+#			# Mark updates. 
+#			_edge_up = [[s_1, e_id_s_1, lx_2, ly_2, -0.5]]
+#			_edge_up += [[s_2, e_id_s_2, lx_1, ly_1, -0.5]]
+#			_edge_up += [[s_1, e_id_s_1, lx_1, ly_1, 0.5]]
+#			_edge_up += [[s_2, e_id_s_2, lx_2, ly_2, 0.5]]
+#
+#			# Add to the norm of the subgradient. 
+#			norm_gt += 4*(0.5**2)
 
-			# Record slave updates. 
-			lx, ly = _edge_in[4]
-			self._slave_edge_up[_edge_in[1], _edge_ret[2], 0:lx*ly] = _edge_ret[1]
-			# Add subgradient. 
-			norm_gt += _edge_ret[3]
-			# Mark updates. 
-			self._mark_sl_up[1, _edge_in[1]] = True
+#			self.slave_list[s_1].edge_energies[e_id_s_1][lx_2][ly_2]	-= alpha/2
+#			self.slave_list[s_2].edge_energies[e_id_s_2][lx_1][ly_1]	-= alpha/2
+#
+#			self.slave_list[s_1].edge_energies[e_id_s_1][lx_1][ly_1]	+= alpha/2
+#			self.slave_list[s_2].edge_energies[e_id_s_2][lx_2][ly_2]	+= alpha/2
+#
+#			# Add to the norm of the subgradient. 
+#			norm_gt += 4*(0.5**2)
+
+#		# Distribute the computation of node and edge updates, as they can be done independantly. 
+#		n_cores = cpu_count() - 1
+#
+#		# Collect node updates in node_updates, as returned by _compute_node_updates().
+#		# Create input list first. 
+#		_node_up_inputs = [[i, self.nodes_in_slaves[i], self.slave_list[self.nodes_in_slaves[i]], self.n_labels[i]]
+#		        for i in range(self.n_nodes) if self._n_slaves_nodes[i] > 1]
+#		# Distribute.
+#		node_updates = Parallel(n_jobs=n_cores)(delayed(_compute_node_updates)(i) for i in _node_up_inputs)
+#
+#		# Collect edge updates in edge_updates, as returned by _compute_edge_updates(). 
+#		# Create input list first. 
+#		_edge_up_inputs = [[e, self.nodes_in_slaves[e], self.slave_list[self.nodes_in_slaves[e]], self._node_ids_from_edge_id(e), 
+#		                   [self.n_labels[self._node_ids_from_edge_id(e)[0]], self.n_labels[self._node_ids_from_edge_id(e)[1]]]]
+#						   for e in range(self.n_edges) if self._n_slaves_edges[e] > 1]
+#		# Distribute only if there are shared edges (some decompositions, for example, row_col, do not have any shared edges).
+#		if len(_edge_up_inputs) > 0:
+#			edge_updates = Parallel(n_jobs=n_cores)(delayed(_compute_edge_updates)(i) for i in _edge_up_inputs)
+#
+#		# Now store obtained values in self._slave_node_up, and self._slave_edge_up. 
+#		# Meanwhile, also compute the total subgradient. 
+#		for _nu in range(len(node_updates)):
+#			_node_ret = node_updates[_nu]
+#			# Check if any updates need to be made.
+#			if not _node_ret[0]: 
+#				continue
+#
+#			_node_in  = _node_up_inputs[_nu]
+#
+#			# Record slave updates. 
+#			self._slave_node_up[_node_in[1], _node_ret[2], 0:n_labels[n_id]] = _node_ret[1]
+#			# Add subgradient.
+#			norm_gt += _node_ret[3]
+#			# Mark updates. 
+#			self._mark_sl_up[0, _node_in[1]] = True
+#		
+#		# Do the same for edge updates. 
+#		for _eu in range(len(edge_updates)):
+#			_edge_ret = edge_updates[_eu]
+#			# Check if any updates need to be done. 
+#			if not _edge_ret[0]:
+#				continue
+#
+#			_edge_in = _edge_up_inputs[_eu]
+#
+#			# Record slave updates. 
+#			lx, ly = _edge_in[4]
+#			self._slave_edge_up[_edge_in[1], _edge_ret[2], 0:lx*ly] = _edge_ret[1]
+#			# Add subgradient. 
+#			norm_gt += _edge_ret[3]
+#			# Mark updates. 
+#			self._mark_sl_up[1, _edge_in[1]] = True
 
 		# Reset the slaves to solve. 
 		self._slaves_to_solve = np.where(np.sum(self._mark_sl_up, axis=0)!=0)[0]
