@@ -366,6 +366,9 @@ class Lattice:
 		#   of computing the size of the corresponding vector each time. 
 		self._n_slaves_nodes = np.array([self.nodes_in_slaves[n].size for n in range(self.n_nodes)], dtype=np.int)
 		self._n_slaves_edges = np.array([self.edges_in_slaves[e].size for e in range(self.n_edges)], dtype=np.int)
+		# Now we need only check those nodes and edges which associate with at least two slaves. 
+		self._check_nodes    = np.where(self._n_slaves_nodes > 1)[0]
+		self._check_edges    = np.where(self._n_slaves_edges > 1)[0]
 
 		# Finally, we must modify the energies for every edge or node depending on 
 		#   how many slaves it is a part of. The energy for a node/edge is distributed
@@ -636,6 +639,8 @@ class Lattice:
 		# Set the optimisation strategy. 
 		self._optim_strategy = strategy
 
+		_naive_search = False
+
 		# First check if the lattice is complete. 
 		if not self.check_completeness():
 			n_list, e_list	= self._find_empty_attributes()
@@ -717,10 +722,17 @@ class Lattice:
 			print '||dg||**2 = %4.2f, PRIMAL = %6.6f. DUAL = %6.6f, P - D = %6.6f, min(P - D) = %6.6f' \
 				%(self.subgradient_norms[-1], primal_cost, dual_cost, primal_cost-dual_cost, self._best_primal_cost - self._best_dual_cost)
 
+			# If disagreements are less than or equal to 2, we do a brute force
+			#    to search for the solution. 
+			if _naive_search and disagreements.size <= 2:
+				print 'Forcing naive search as _naive_search is True and n_miss <= 2.'
+				self.force_naive_search(disagreements, response='y')
+				break
+
 			# Test: #TODO
 			# Switch to step strategy if n_miss = disagreements.size < 5% of number of nodes. 
 			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.05*self.n_nodes:
-				print 'Switching to step strategy as n_miss < 5% of the number of nodes'
+				print 'Switching to step strategy as n_miss < 5% of the number of nodes.'
 				a_start = alpha
 				self._optim_strategy = 'step'
 
@@ -788,8 +800,9 @@ class Lattice:
 		#   has non-zero values in the end.
 		self._mark_sl_up[:]	= False
 	
-		# We iterate over all nodes and edges and calculate updates to parameters of all slaves. 
-		for n_id in range(self.n_nodes):
+		# We iterate over nodes and edges which associate with at least two slaves
+		#    and calculate updates to parameters of all slaves. 
+		for n_id in self._check_nodes:
 			# Retrieve the list of slaves that use this node. 
 			s_ids			= self.nodes_in_slaves[n_id]
 			n_slaves_nid	= s_ids.size
@@ -869,7 +882,7 @@ class Lattice:
 				# Set flags for these slaves to True
 	
 		# That completes the updates for node energies. Now we move to edge energies. 
-		for e_id in range(self.n_edges):
+		for e_id in self._check_edges:
 			# Retrieve the list of slaves that use this edge. 
 			s_ids			= self.edges_in_slaves[e_id]
 			n_slaves_eid	= s_ids.size
@@ -1021,6 +1034,43 @@ class Lattice:
 				self.slave_list[s_id].edge_energies += alpha*np.reshape(self._slave_edge_up[s_id,:n_edges_this_slave,:], [n_edges_this_slave,self.max_n_labels,self.max_n_labels])
 
 		return alpha
+
+
+	def force_naive_search(self, disagreements, response='t'):
+		''' 
+		Force a naive search for the best solution by varying 
+		the labelling of nodes in `disagreements`. Please use
+		cautiously, specifying at most three nodes in `disagreements`.
+		'''
+		while response not in ['y', 'n']:
+			print 'Naive search takes exponential time. Supplied disagreeing nodes',
+			print 'are %d in number. Proceed? (y/n) ' %(disagreements.size),
+			response = raw_input()
+			print 'You said: ' + response + '.'
+		if response is 'n':
+			return
+	
+		# Get part of the primal solution. 
+		labels_ = self._get_primal_solution()
+
+		# Generate all possible labellings. 
+		n_labels = self.n_labels[disagreements]
+		labellings = _generate_label_permutations(n_labels)	
+		
+		# Find the minimum. 
+		min_energy = np.inf
+		min_labels = None
+		for l_ in labellings:
+			labels_[disagreements] = l_
+			_energy = self._compute_primal_cost(labels=labels_)
+			if _energy < min_energy:
+				min_energy = _energy
+				min_labels = l_
+
+		# Set the best labels. 
+		print 'Setting the best labels for disagreeing nodes ...'
+		self.labels                = labels_
+		self.labels[disagreements] = min_labels
 
 
 	def plot_costs(self):
@@ -1466,6 +1516,7 @@ def _optimise_slave(s):
 		raise ValueError
 # ---------------------------------------------------------------------------------------
 
+
 def make_one_hot(label, s1, s2=None):
 	'''
 	Make one-hot vector for the given label depending on the number of labels
@@ -1490,4 +1541,18 @@ def make_one_hot(label, s1, s2=None):
 	oh_vec[label] = True
 	# Return 
 	return oh_vec
+# ---------------------------------------------------------------------------------------
+
+
+def _generate_label_permutations(n_labels):
+	if n_labels.size == 1:
+		return [[i] for i in range(n_labels[0])]
+
+	_t   = _generate_label_permutations(n_labels[1:])
+
+	_ret = []
+	for i in range(n_labels[0]):
+		_ret += [[i] + _tt for _tt in _t]
+
+	return _ret
 
