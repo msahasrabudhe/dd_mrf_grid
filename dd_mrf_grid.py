@@ -349,6 +349,9 @@ class Lattice:
 		Lattice._create_slaves(): Create slaves for this particular lattice.
 		The default decomposition is 'cell'. If 'row_col' is specified, create a set of trees
 		instead - one for every row and every column. 
+		If 'rook' is specified, create one slave for every vertex - defined by permitted rook moves
+		from that vertex. That is, for a point (i,j) we have a tree that extends in all directions from 
+		(i, j). 
 		'''
 
 		# self._max_nodes_in_slaves, and self._max_edges_in_slaves are used
@@ -357,10 +360,19 @@ class Lattice:
 		self._max_nodes_in_slave = 0 
 		self._max_edges_in_slave = 0
 
-		if decomposition is 'cell':
-			self._create_cell_slaves()
-		elif decomposition is 'row_col':
-			self._create_row_col_slaves()
+		# Functions to call depending on which slave is chosen
+		_slave_funcs = {
+			'cell':    self._create_cell_slaves,
+			'row_col': self._create_row_col_slaves,
+			'rook':    self._create_rook_slaves
+		}
+		
+		if decomposition not in _slave_funcs.keys():
+			print 'decomposition must be one of', _slave_funcs.keys()
+			raise ValueError
+
+		# Create slaves depending on what decomposition is requested.
+		_slave_funcs[decomposition]()
 
 		# Two variables to hold how many slaves each node and edge is contained in (instead
 		#   of computing the size of the corresponding vector each time. 
@@ -373,24 +385,18 @@ class Lattice:
 		# Finally, we must modify the energies for every edge or node depending on 
 		#   how many slaves it is a part of. The energy for a node/edge is distributed
 		#   equally among all slaves. 
-		for n_id in range(self.n_nodes):
+		for n_id in np.where(self._n_slaves_nodes > 1)[0]:
 			# Retrieve all the slaves this node is part of.
 			s_ids	= self.nodes_in_slaves[n_id]
-			# If there is only one slave, no need to do anything.
-			if s_ids.size == 1:
-				continue
 			# Distribute this node's energy equally between all slaves.
 			for s in s_ids:
 				n_id_in_slave	= self.slave_list[s].node_map[n_id]
 				self.slave_list[s].node_energies[n_id_in_slave] /= 1.0*s_ids.size
 
 		# Doing the same for edges ...
-		for e_id in range(self.n_edges):
+		for e_id in np.where(self._n_slaves_edges > 1)[0]:
 			# Retrieve all slaves this edge is part of.
 			s_ids	= self.edges_in_slaves[e_id]
-			# Do nothing if this edge is in only one slave
-			if s_ids.size == 1:
-				continue
 			# Distribute this edge's energy equally between all slaves. 
 			for s in s_ids:
 				e_id_in_slave	= self.slave_list[s].edge_map[e_id]
@@ -596,6 +602,112 @@ class Lattice:
 				# This is the first time these edges are being assigned to a slave. 
 				self.edges_in_slaves[e_id][0]	= s_id
 
+	
+	def _create_rook_slaves(self):
+		'''
+		Lattice._create_rook_slaves(): Create slaves defined by all possible rook moves from a vertex, 
+		for every vertex. That is, for every vertex, create a slave that includes its entire row and its
+		entire column.
+		'''
+		# The number of slaves.
+		self.n_slaves		= self.rows*self.cols
+		# Create empty slaves initially. 
+		self.slave_list		= np.array([Slave() for i in range(self.n_slaves)])
+		
+		# The following lists record for every node and edge, to which 
+		#	slaves it belongs. A little-bit of hard-coding here. We know 
+		#   each node is in (self.rows+self.cols-1) slaves.
+		# More efficient than adding to lists. 
+		self.nodes_in_slaves	= [[] for i in range(self.n_nodes)]
+		self.edges_in_slaves	= [[] for i in range(self.n_edges)]
+		# This also means we can automatically assign these values:
+		self._max_nodes_in_slave = self.rows + self.cols - 1
+		self._max_edges_in_slave = self.rows + self.cols - 2
+
+		# Iterate over the number of slaves to create each one. 
+		# Slave IDs correspond to node IDs.
+		slave_ids	= np.arange(self.n_nodes)
+
+		# Create each slave. 
+		for s_id in slave_ids:
+			# Get the centre point. 
+			x, y = s_id/self.cols, s_id%self.cols
+
+			# Creating node and edge lists: 
+			# We add nodes on the same row first, then nodes on the same column. 
+			node_list = x*self.cols + np.arange(self.cols)
+			node_list = np.concatenate((node_list, np.array(range(x)+range(x+1,self.rows))*self.cols + y))
+
+			# Add edges in this row.
+			edge_list = [self._edge_id_from_node_ids(node_list[i], node_list[i+1]) for i in range(np.min([y+1,self.cols-1]))]
+			# Add edges from id_xy to its top and bottom neighbours. This is done because of the ordering restriction 
+			#    required by max-product BP. When adj_mat is flattened, the order in which True appears must signify
+			#    the order in which edges appear in edge_pot. Hence, we must add these edges here, and, consequently, 
+			#    add the edge energies also in the same order as these edges. 
+			if x > 0:
+				tn_id     = self.cols + x - 1
+				edge_list += [self._edge_id_from_node_ids(node_list[tn_id], node_list[y])]		# Top neighbour. 
+			if x + 1 < self.rows:
+				bn_id     = self.cols + x
+				edge_list += [self._edge_id_from_node_ids(node_list[y], node_list[bn_id])]		# Bottom neighbour. 
+
+			edge_list += [self._edge_id_from_node_ids(node_list[i], node_list[i+1]) for i in range(y+1,self.cols-1)]
+			# Add edges in this column. 
+			_edges_column = [[i, i+1] for i in range(self.cols, node_list.size-1)
+	                          if (node_list[i+1] - node_list[i] == self.cols)]
+			edge_list += [self._edge_id_from_node_ids(node_list[e[0]], node_list[e[1]]) for e in _edges_column]
+			edge_list = np.array(edge_list, dtype=np.int)
+
+			# The number of labels for each node in this slave
+			n_labels    = np.zeros(node_list.size, dtype=np.int)
+			n_labels[:] = self.n_labels[node_list]	
+
+			# Create node and edge energies
+			node_energies = np.zeros((node_list.size, self.max_n_labels))
+			edge_energies = np.zeros((edge_list.size, self.max_n_labels, self.max_n_labels))
+
+			# Extract node and edge energies. 
+			node_energies[:] = self.node_energies[node_list,:]
+			edge_energies[:] = self.edge_energies[edge_list,:,:]
+
+			# Create adjacency matrix. 
+			adj_mat = np.zeros((node_list.size, node_list.size), dtype=np.bool)
+			# Add edges for the "row part" of the rook. 
+			adj_mat[:self.cols,:self.cols] = np.roll(np.eye(self.cols,dtype=np.bool), 1, axis=1)
+			adj_mat[self.cols-1, 0]        = False 			# Fix the incorrect `True` introduced by np.roll
+			# Add top neighbour of id_xy.
+			if x > 0:
+				adj_mat[y, tn_id] = True
+			# Add bottom neighbour of id_xy.
+			if x + 1 < self.rows:
+				adj_mat[y, bn_id] = True
+			# Add edges for the "column part" of the rook.
+			for e in _edges_column:
+				adj_mat[e[0],e[1]] = True
+			# Finally, make adjacency matrix symmetric.
+			adj_mat = adj_mat + adj_mat.T
+
+			# TODO: Issues so far:
+			# 1. create adjacency matrix. 
+			# 2. bp.py assumes that edge_pot are received so that they agree with the ordering in adj_mat,
+			#    that is, if adj_mat is row-first flattened, the `True`s will appear in the same order as
+			#    the specified edge_energies. 
+
+			# Make graph structure. 
+			row_gs	= bp.make_graph_struct(adj_mat, n_labels)
+			# Set parameters for this slave. 
+			self.slave_list[s_id].set_params(node_list, edge_list, node_energies, \
+					n_labels, edge_energies, row_gs, 'tree')
+
+			# Finally, add this slave to the lists of all nodes in the node list
+			for n_id in node_list:
+				self.nodes_in_slaves[n_id] += [s_id]
+			for e_id in edge_list:
+				self.edges_in_slaves[e_id] += [s_id]
+
+		# For convenience, turn the individual lists in nodes_in_slaves and edges_in_slaves into numpy arrays. 
+		self.nodes_in_slaves	= [np.array(t) for t in self.nodes_in_slaves]
+		self.edges_in_slaves	= [np.array(t) for t in self.edges_in_slaves]
 
 
 	def optimise(self, a_start=1.0, max_iter=1000, decomposition='cell', strategy='step'):
@@ -623,7 +735,7 @@ class Lattice:
 		'''
 
 		# Check if a permissible decomposition is used. 
-		if decomposition not in ['cell', 'row_col']:
+		if decomposition not in ['cell', 'row_col', 'rook']:
 			print 'Permissible values for decomposition are \'cell\' and \'row_col\'.'
 			raise ValueError
 
