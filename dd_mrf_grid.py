@@ -770,8 +770,8 @@ class Lattice:
 
 		# Create slaves. This creates a list of slaves and stores it in 
 		# 	self.slave_list. The numbering of the slaves starts from the top-left,
-		# 	and continues in row-major fashion. There are (self.rows-1)*(self.cols-1)
-		# 	slaves. 
+		# 	and continues in row-major fashion. For example, there are 
+		#   (self.rows-1)*(self.cols-1) slaves if the 'cell' decomposition is used. 
 		self._create_slaves(decomposition=self.decomposition)
 
 		# Create update variables for slaves. Created once, reset to zero each time
@@ -855,7 +855,7 @@ class Lattice:
 
 			# Test: #TODO
 			# Switch to step strategy if n_miss = disagreements.size < 5% of number of nodes. 
-			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.001*self.n_nodes:
+			if 'adaptive' in self._optim_strategy and  disagreements.size < 0.001*self.n_nodes:
 				print 'Switching to step strategy as n_miss < 0.1% of the number of nodes.'
 				a_start = alpha
 				self._optim_strategy = 'step'
