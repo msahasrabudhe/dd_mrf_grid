@@ -710,7 +710,7 @@ class Lattice:
 		self.edges_in_slaves	= [np.array(t) for t in self.edges_in_slaves]
 
 
-	def optimise(self, a_start=1.0, max_iter=1000, decomposition='cell', strategy='step'):
+	def optimise(self, a_start=1.0, max_iter=1000, decomposition='cell', strategy='step', _verbose=True):
 		'''
 		Lattice.optimise(): Optimise the set energies over the lattice and return a labelling. 
 
@@ -794,12 +794,14 @@ class Lattice:
 
 		# Loop till not converged. 
 		while not converged and it <= max_iter:
-			print 'Iteration %5d. Solving %5d subproblems ...' %(it, self._slaves_to_solve.size),
+			if _verbose:
+				print 'Iteration %5d. Solving %5d subproblems ...' %(it, self._slaves_to_solve.size),
 			# Solve all the slaves. 
 			# The following optimises the energy for each slave, and stores the 
 			#    resulting labelling as a member in the slaves. 
 			self._optimise_slaves()
-			print 'done.',
+			if _verbose:
+				print 'done.',
 			sys.stdout.flush()
 
 			# Get the primal cost at this iteration
@@ -817,21 +819,25 @@ class Lattice:
 			# Verify whether the algorithm has converged. If all slaves agree
 			#    on the labelling of every node, we have convergence. 
 			if self._check_consistency():
-				print 'Converged after %d iterations!' %(it)
-				print 'alpha_t at convergence iteration is %g.' %(alpha)
+				if _verbose:
+					print 'Converged after %d iterations!' %(it)
+					print 'alpha_t at convergence iteration is %g.' %(alpha)
 				# Finally, assign labels.
 				self._assign_labels()
 				# Break from loop.
 				converged = True
 				break
 
+			# Find the number of disagreeing points. 
+			disagreements = self._find_disagreeing_nodes()
+
 			# Apply updates to parameters of each slave. 
 			alpha = self._apply_param_updates(a_start, it)
 
-			# Find the number of disagreeing points. 
-			disagreements = self._find_disagreeing_nodes()
-			print ' alpha = %10.6f. n_miss = %6d.' %(alpha, disagreements.size),
-			print '||dg||**2 = %4.2f, PRIMAL = %6.6f. DUAL = %6.6f, P - D = %6.6f, min(P - D) = %6.6f' \
+			# Print statistics. .
+			if _verbose:
+				print ' alpha = %10.6f. n_miss = %6d.' %(alpha, disagreements.size),
+				print '||dg||**2 = %4.2f, PRIMAL = %6.6f. DUAL = %6.6f, P - D = %6.6f, min(P - D) = %6.6f' \
 				%(self.subgradient_norms[-1], primal_cost, dual_cost, primal_cost-dual_cost, self._best_primal_cost - self._best_dual_cost)
 
 			# If disagreements are less than or equal to 2, we do a brute force
@@ -843,8 +849,8 @@ class Lattice:
 
 			# Test: #TODO
 			# Switch to step strategy if n_miss = disagreements.size < 5% of number of nodes. 
-			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.05*self.n_nodes:
-				print 'Switching to step strategy as n_miss < 5% of the number of nodes.'
+			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.01*self.n_nodes:
+				print 'Switching to step strategy as n_miss < 1% of the number of nodes.'
 				a_start = alpha
 				self._optim_strategy = 'step'
 
@@ -1221,7 +1227,22 @@ class Lattice:
 			ret_	= reduce(lambda x,y: x and (y == ls_[0]), ls_[1:], True)
 			if not ret_:
 				disagreements[n_id] = True
-		return np.where(disagreements == True)[0]
+
+		# Update self._check_nodes to find only those nodes where a disagreement exists. 
+		self._check_nodes = np.where(disagreements == True)[0].astype(np.int)
+		# Find disagreeing edges. We iterate over self._check_nodes to find all pairs of 
+		#   nodes which form an edge. 
+		edge_disagreements = []
+		for i in range(self._check_nodes.size - 1):
+			j = i+1
+			while j < self._check_nodes.size and self._check_nodes[j] <= self._check_nodes[i] + self.cols:
+				if self._check_nodes[j] - self._check_nodes[i] == 1 or self._check_nodes[j] - self._check_nodes[i] == self.cols:
+					edge_disagreements += [self._edge_id_from_node_ids(self._check_nodes[i], self._check_nodes[j])]
+				j += 1
+		# Update self._check_edges to reflect to be only these edges. 
+		self._check_edges = np.array(edge_disagreements, dtype=np.int)
+		# Return disagreeing nodes. 
+		return self._check_nodes
 
 
 	def _assign_labels(self):
