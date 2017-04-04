@@ -740,9 +740,10 @@ class Lattice:
 			raise ValueError
 
 		# Check if a permissible strategy is being used. 
-		if strategy not in ['step', 'step_sg', 'adaptive', 'adaptive_d']:
+		if strategy not in ['step', 'step_ss', 'step_sg', 'adaptive', 'adaptive_d']:
 			print 'Permissible values for strategy are \'step\', \'step_sg\', \'adaptive\', and \'adaptive_d\''
 			print '\'step\'        Use diminshing step-size rule: a_t = a_start/sqrt(it).'
+			print '\'step_ss\'     Use a square summable but not summable sequence: a_t = a_start/(1.0 + t).'
 			print '\'step_sg\'     Use subgradient in combination with diminishing step-size rule: a_t = a_start/(sqrt(it)*||dg||**2).'
 			print '\'adaptive\'    Use adaptive rule given by the difference between the estimated PRIMAL cost and the current DUAL cost: a_t = a_start*(PRIMAL_t - DUAL_t)/||dg||**2.'
 			print '\'adaptive_d\'  Use adaptive rule with diminishing step-size rule: a_t = a_start*(PRIMAL_t - DUAL_t)/(sqrt(it)*||dg||**2).'
@@ -834,7 +835,7 @@ class Lattice:
 				break
 
 			# Find the number of disagreeing points. 
-			disagreements = self._find_disagreeing_nodes()
+			disagreements = self._find_conflicts()
 
 			# Apply updates to parameters of each slave. 
 			alpha = self._apply_param_updates(a_start, it)
@@ -1141,6 +1142,8 @@ class Lattice:
 		# Compute the alpha for this step. 
 		if self._optim_strategy is 'step':
 			alpha	= a_start/np.sqrt(it)
+		elif self._optim_strategy is 'step_ss':
+			alpha   = a_start/(1 + it)
 		elif self._optim_strategy is 'step_sg':
 			alpha   = a_start/np.sqrt(it)
 			alpha   = alpha*1.0/norm_gt
@@ -1149,7 +1152,7 @@ class Lattice:
 			dual_t		= self.dual_costs[-1]
 			alpha		= a_start*(approx_t - dual_t)/norm_gt
 			if self._optim_strategy is 'adaptive_d':
-				alpha   = alpha*1.0/sqrt(it)
+				alpha   = alpha*1.0/np.sqrt(it)
 
 		# Perform the marked updates. The slaves to be updates are also the slaves
 		#   to be solved!
@@ -1228,32 +1231,34 @@ class Lattice:
 		return True
 
 
-	def _find_disagreeing_nodes(self):
+	def _find_conflicts(self):
 		'''
 		A function to find disagreeing nodes at a step of the algorithm. 
 		'''
-		disagreements = np.zeros(self.n_nodes, dtype=bool)
+		node_conflicts = np.zeros(self.n_nodes, dtype=bool)
+		edge_conflicts = np.zeros(self.n_edges, dtype=bool)
 
 		for n_id in range(self.n_nodes):
 			s_ids	= self.nodes_in_slaves[n_id]
 			ls_		= [self.slave_list[s].get_node_label(n_id) for s in s_ids]
 			ret_	= reduce(lambda x,y: x and (y == ls_[0]), ls_[1:], True)
 			if not ret_:
-				disagreements[n_id] = True
+				node_conflicts[n_id] = True
 
 		# Update self._check_nodes to find only those nodes where a disagreement exists. 
-		self._check_nodes = np.where(disagreements == True)[0].astype(np.int)
-		# Find disagreeing edges. We iterate over self._check_nodes to find all pairs of 
-		#   nodes which form an edge. 
-		edge_disagreements = []
+		self._check_nodes = np.where(node_conflicts == True)[0].astype(np.int)
+		# Find disagreeing edges. We iterate over self._check_nodes, and add all 
+		#    neighbours of a node in _check_nodes. 
 		for i in range(self._check_nodes.size - 1):
 			n_id = self._check_nodes[i]
-			if n_id + 1 < self.n_nodes and disagreements[n_id + 1]:
-				edge_disagreements += [self._edge_id_from_node_ids(n_id, n_id + 1)]
-			if n_id + self.cols < self.n_nodes and disagreements[n_id + self.cols]:
-				edge_disagreements += [self._edge_id_from_node_ids(n_id, n_id + self.cols)]
+			neighs = [n_id + x for x in [-self.cols, -1, 1, self.cols]]
+			neighs = [x for x in neighs if x >= 0 and x < self.n_nodes and \
+		                                   not (n_id%self.cols == 0 and x-n_id == -1) and \
+				                           not (x%self.cols == 0 and x-n_id == 1)]
+			edge_conflicts[neighs] = True
+
 		# Update self._check_edges to reflect to be only these edges. 
-		self._check_edges = np.array(edge_disagreements, dtype=np.int)
+		self._check_edges = np.where(edge_conflicts == True)[0].astype(np.int)
 		# Return disagreeing nodes. 
 		return self._check_nodes
 
