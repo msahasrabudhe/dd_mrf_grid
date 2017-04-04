@@ -740,11 +740,15 @@ class Lattice:
 			raise ValueError
 
 		# Check if a permissible strategy is being used. 
-		if strategy not in ['step', 'adaptive']:
-			print 'Permissible values for strategy are \'step\', and \'adaptive\''
+		if strategy not in ['step', 'step_sg', 'adaptive', 'adaptive_d']:
+			print 'Permissible values for strategy are \'step\', \'step_sg\', \'adaptive\', and \'adaptive_d\''
+			print '\'step\'        Use diminshing step-size rule: a_t = a_start/sqrt(it).'
+			print '\'step_sg\'     Use subgradient in combination with diminishing step-size rule: a_t = a_start/(sqrt(it)*||dg||**2).'
+			print '\'adaptive\'    Use adaptive rule given by the difference between the estimated PRIMAL cost and the current DUAL cost: a_t = a_start*(PRIMAL_t - DUAL_t)/||dg||**2.'
+			print '\'adaptive_d\'  Use adaptive rule with diminishing step-size rule: a_t = a_start*(PRIMAL_t - DUAL_t)/(sqrt(it)*||dg||**2).'
 			raise ValueError
 		# If strategy is adaptive, we would like a_start to be in (0, 2).
-		if strategy is 'adaptive' and (a_start <= 0 or a_start >= 2):
+		if strategy is 'adaptive' and (a_start <= 0 or a_start > 2):
 			print 'Please use 0 < a_start < 2 for an adaptive strategy.'
 			return
 
@@ -761,11 +765,13 @@ class Lattice:
 			print 'The following edges are not set:', e_list
 			return 
 
+		self.decomposition = decomposition
+
 		# Create slaves. This creates a list of slaves and stores it in 
 		# 	self.slave_list. The numbering of the slaves starts from the top-left,
 		# 	and continues in row-major fashion. There are (self.rows-1)*(self.cols-1)
 		# 	slaves. 
-		self._create_slaves(decomposition=decomposition)
+		self._create_slaves(decomposition=self.decomposition)
 
 		# Create update variables for slaves. Created once, reset to zero each time
 		#   _apply_param_updates() is called. 
@@ -848,8 +854,8 @@ class Lattice:
 
 			# Test: #TODO
 			# Switch to step strategy if n_miss = disagreements.size < 5% of number of nodes. 
-			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.01*self.n_nodes:
-				print 'Switching to step strategy as n_miss < 1% of the number of nodes.'
+			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.001*self.n_nodes:
+				print 'Switching to step strategy as n_miss < 0.1% of the number of nodes.'
 				a_start = alpha
 				self._optim_strategy = 'step'
 
@@ -889,7 +895,10 @@ class Lattice:
 		for i in range(self._slaves_to_solve.size):
 			s_id = self._slaves_to_solve[i]
 			self.slave_list[s_id].set_labels(optima[i][0])
-			self.slave_list[s_id]._compute_energy()
+			self.slave_list[s_id]._energy = optima[i][1]
+			if self.slave_list[s_id].struct is 'tree':
+				self.slave_list[s_id]._messages = optima[i][2]
+#			self.slave_list[s_id]._compute_energy()
 
 	# End of Lattice._optimise_slaves()
 
@@ -1132,10 +1141,15 @@ class Lattice:
 		# Compute the alpha for this step. 
 		if self._optim_strategy is 'step':
 			alpha	= a_start/np.sqrt(it)
-		elif self._optim_strategy is 'adaptive':
+		elif self._optim_strategy is 'step_sg':
+			alpha   = a_start/np.sqrt(it)
+			alpha   = alpha*1.0/norm_gt
+		elif self._optim_strategy in ['adaptive', 'adaptive_d']:
 			approx_t	= self._best_primal_cost
 			dual_t		= self.dual_costs[-1]
 			alpha		= a_start*(approx_t - dual_t)/norm_gt
+			if self._optim_strategy is 'adaptive_d':
+				alpha   = alpha*1.0/sqrt(it)
 
 		# Perform the marked updates. The slaves to be updates are also the slaves
 		#   to be solved!
@@ -1233,10 +1247,11 @@ class Lattice:
 		#   nodes which form an edge. 
 		edge_disagreements = []
 		for i in range(self._check_nodes.size - 1):
-			if disagreements[i + 1]:
-				edge_disagreements += [self._edge_id_from_node_ids(self._check_nodes[i], self._check_nodes[i]+1)]
-			if disagreements[i + self.cols]:
-				edge_disagreements += [self._edge_id_from_node_ids(self._check_nodes[i], self._check_nodes[i+self.cols])]
+			n_id = self._check_nodes[i]
+			if n_id + 1 < self.n_nodes and disagreements[n_id + 1]:
+				edge_disagreements += [self._edge_id_from_node_ids(n_id, n_id + 1)]
+			if n_id + self.cols < self.n_nodes and disagreements[n_id + self.cols]:
+				edge_disagreements += [self._edge_id_from_node_ids(n_id, n_id + self.cols)]
 		# Update self._check_edges to reflect to be only these edges. 
 		self._check_edges = np.array(edge_disagreements, dtype=np.int)
 		# Return disagreeing nodes. 
@@ -1280,18 +1295,58 @@ class Lattice:
 		labels = np.zeros(self.n_nodes, dtype=np.int)
 
 		# Iterate over every node. 
-		for n_id in range(self.n_nodes):
-			# Retrieve the labels assigned by every slave to this node. 
-			s_ids    = self.nodes_in_slaves[n_id]
-			s_labels = [self.slave_list[s].label_from_node[n_id] for s in s_ids]
+		if self.decomposition is 'row_col2':
+			# Use Max product messages to compute the best solution. 
+			node_order = np.arange(self.n_nodes)
+			for i in range(self.n_nodes):
+				n_id  = node_order[i]
+				n_lbl = self.n_labels[n_id]
+				# Initial cost is just the unary. 
+				cost = self.node_energies[n_id, :n_lbl]
+#				print 'unary    ', self.node_energies[n_id, :n_lbl]
 
-			# Find the label with the lower unary, amonst all slaves. 
-#			n_in_sls = [self.slave_list[s].node_map[n_id] for s in s_ids]
-#			lbl_ergs = [self.slave_list[s_ids[i]].node_energies[n_in_sls[i]][s_labels[i]] for i in range(s_ids.size)]
-#			labels[n_id] = s_labels[np.argmin(lbl_ergs)]
+				for offset in [-self.cols, -1, 1, self.cols]:	
+					# Check that an edge exists between n_id and (n_id + offset)
+					# No top (bottom) edges for vertices in the top (bottom) row.
+					# No left edges for vertices in the left-most column. 
+					# No right edges for vertices in the right-most column. 
+					if n_id + offset >= 0 and n_id + offset < self.n_nodes and \
+						not (n_id%self.cols == 0 and offset == -1) and \
+						not ((n_id+1)%self.cols == 0 and offset == 1):          
 
-			# Find the most voted label. 
-			labels[n_id] = np.int(stats.mode(s_labels)[0][0])
+						np_id = n_id + offset
+						# Check if the node lies to the left or the right of n_id in node_order
+						i, j = np.min([n_id, np_id]), np.max([n_id, np_id])
+						e_id = self._edge_id_from_node_ids(i, j)
+						r, c = n_id/self.cols, n_id%self.cols
+
+						if np_id in node_order[:i]:
+							cost += self.edge_energies[e_id,:n_lbl,labels[np_id]] if np_id > n_id else self.edge_energies[e_id,labels[np_id],:n_lbl]
+#							print 'pairwise ', self.edge_energies[e_id,:n_lbl,labels[np_id]] if np_id > n_id else self.edge_energies[e_id,labels[np_id],:n_lbl]
+						else:
+							# Get the slave ID in which this edge is. 
+							if offset == 1 or offset == -1:
+								s_id = r	
+							else:
+								s_id = c + self.rows
+
+							e_id_in_s = self.slave_list[s_id].edge_map[e_id]
+							n_edges_in_s = self.slave_list[s_id].graph_struct['n_edges']
+							
+							e_id_in_s += n_edges_in_s if np_id > n_id else 0
+							cost += (1 - self.slave_list[s_id]._messages[e_id_in_s, :n_lbl])
+#							print 'msgs     ', self.slave_list[s_id]._messages[e_id_in_s, :n_lbl]
+
+#				print '--'
+
+				labels[n_id] = np.argmin(cost)
+		else:
+			for n_id in range(self.n_nodes):
+				# Retrieve the labels assigned by every slave to this node. 
+				s_ids    = self.nodes_in_slaves[n_id]
+				s_labels = [self.slave_list[s].label_from_node[n_id] for s in s_ids]
+				# Find the most voted label. 
+				labels[n_id] = np.int(stats.mode(s_labels)[0][0])
 
 		# Return this labelling. 
 		return labels
@@ -1581,7 +1636,7 @@ def _optimise_tree(slave):
 	labels, messages = bp.max_prod_bp(node_pot, edge_pot, gs)
 	# We return the energy. 
 	energy = _compute_tree_slave_energy(slave.node_energies, slave.edge_energies, labels, slave.graph_struct)
-	return labels, energy
+	return labels, energy, messages
 # ---------------------------------------------------------------------------------------
 
 
