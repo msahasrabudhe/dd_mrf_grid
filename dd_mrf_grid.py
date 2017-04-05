@@ -710,7 +710,7 @@ class Lattice:
 		self.edges_in_slaves	= [np.array(t) for t in self.edges_in_slaves]
 
 
-	def optimise(self, a_start=1.0, max_iter=1000, decomposition='cell', strategy='step', _verbose=True):
+	def optimise(self, a_start=1.0, max_iter=1000, decomposition='cell', strategy='step', _momentum=0.0, _verbose=True):
 		'''
 		Lattice.optimise(): Optimise the set energies over the lattice and return a labelling. 
 
@@ -751,12 +751,12 @@ class Lattice:
 		# If strategy is adaptive, we would like a_start to be in (0, 2).
 		if strategy is 'adaptive' and (a_start <= 0 or a_start > 2):
 			print 'Please use 0 < a_start < 2 for an adaptive strategy.'
-			return
+			raise ValueError
 
-		# Set the optimisation strategy. 
-		self._optim_strategy = strategy
-
-		_naive_search = False
+		# Momentum must be in [0, 1)
+		if _momentum < 0 or _momentum >= 1:
+			print 'Momentum must be in [0, 1).'
+			raise ValueError
 
 		# First check if the lattice is complete. 
 		if not self.check_completeness():
@@ -764,9 +764,26 @@ class Lattice:
 			print 'Lattice.optimise(): The lattice is not complete.'
 			print 'The following nodes are not set:', n_list
 			print 'The following edges are not set:', e_list
-			return 
+			raise AssertionError
+
+		# Set the optimisation strategy. 
+		self._optim_strategy = strategy
 
 		self.decomposition = decomposition
+
+		_naive_search = True
+
+		# Find the least "step" size in energy. This is given by the smallest difference
+		#   between any two energy energies in the Lattice. 
+		# HACK: If the difference between primal and dual energies at 
+		#   an iteration is smaller than this step size, we can safely 
+		#   perform a naive search on the conflicting nodes, and choose the smallest
+		#   energy. 
+		_all_ergs = np.concatenate((self.node_energies.flatten(), self.edge_energies.flatten()))
+		_all_ergs = np.unique(_all_ergs)
+		_erg_difs = [np.abs(_all_ergs[i] - _all_ergs[i+1]) for i in range(_all_ergs.size-1)]
+		_erg_step = np.min(_erg_difs)
+		self._erg_step = _erg_step
 
 		# Create slaves. This creates a list of slaves and stores it in 
 		# 	self.slave_list. The numbering of the slaves starts from the top-left,
@@ -778,10 +795,17 @@ class Lattice:
 		#   _apply_param_updates() is called. 
 		self._slave_node_up	= np.zeros((self.n_slaves, self._max_nodes_in_slave, self.max_n_labels))
 		self._slave_edge_up	= np.zeros((self.n_slaves, self._max_edges_in_slave, self.max_n_labels*self.max_n_labels))
+		# Create a copy of these to hold the previous state update. Akin to momentum
+		#   update used in NNs. 
+		self._prv_node_sg   = np.zeros_like(self._slave_node_up)
+		self._prv_edge_sg   = np.zeros_like(self._slave_edge_up)
 		# Array to mark slaves for updates. 
 		# The first row corresponds to node updates, while the second to edge updates. 
 		self._mark_sl_up	= np.zeros((2,self.n_slaves), dtype=np.bool)
 
+		# How much momentum to use. Must be in [0, 1)
+		self._momentum = _momentum
+	
 		# Whether converged or not. 
 		converged = False
 
@@ -837,6 +861,14 @@ class Lattice:
 			# Find the number of disagreeing points. 
 			disagreements = self._find_conflicts()
 
+			# Test: #TODO
+			# If disagreements are less than or equal to 2, we do a brute force
+			#    to search for the solution. 
+			if _naive_search and primal_cost-dual_cost <= self._erg_step:
+				print 'Forcing naive search as _naive_search is True, and difference in primal and dual costs <= _erg_step.'
+				self.force_naive_search(disagreements, response='y')
+				break
+
 			# Apply updates to parameters of each slave. 
 			alpha = self._apply_param_updates(a_start, it)
 
@@ -846,16 +878,8 @@ class Lattice:
 				print '||dg||**2 = %4.2f, PRIMAL = %6.6f. DUAL = %6.6f, P - D = %6.6f, min(P - D) = %6.6f' \
 				%(self.subgradient_norms[-1], primal_cost, dual_cost, primal_cost-dual_cost, self._best_primal_cost - self._best_dual_cost)
 
-			# If disagreements are less than or equal to 2, we do a brute force
-			#    to search for the solution. 
-			if _naive_search and disagreements.size <= 2:
-				print 'Forcing naive search as _naive_search is True and n_miss <= 2.'
-				self.force_naive_search(disagreements, response='y')
-				break
-
-			# Test: #TODO
 			# Switch to step strategy if n_miss = disagreements.size < 5% of number of nodes. 
-			if 'adaptive' in self._optim_strategy and  disagreements.size < 0.001*self.n_nodes:
+			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.000*self.n_nodes:
 				print 'Switching to step strategy as n_miss < 0.1% of the number of nodes.'
 				a_start = alpha
 				self._optim_strategy = 'step'
@@ -933,9 +957,6 @@ class Lattice:
 			# Retrieve the list of slaves that use this node. 
 			s_ids			= self.nodes_in_slaves[n_id]
 			n_slaves_nid	= s_ids.size
-			# If there is only one such slave, we have nothing to do. 
-			if n_slaves_nid == 1:
-				continue
 	
 			# Retrieve labels assigned to this point by each slave, and make it into a one-hot vector. 
 	#			ls_		= [self.slave_list[s].get_node_label(n_id) for s in s_ids]
@@ -1013,9 +1034,6 @@ class Lattice:
 			# Retrieve the list of slaves that use this edge. 
 			s_ids			= self.edges_in_slaves[e_id]
 			n_slaves_eid	= s_ids.size
-			# If there is only one such slave, we have nothing to do. 
-			if n_slaves_eid == 1:
-				continue
 	
 			# Retrieve labellings of this edge, assigned by each slave.
 			x, y	= self._node_ids_from_edge_id(e_id)
@@ -1139,6 +1157,10 @@ class Lattice:
 		# Record the norm of the subgradient. 
 		self.subgradient_norms += [norm_gt]
 
+		# Add momentum.
+		self._slave_node_up = (1.0 - self._momentum)*self._slave_node_up + self._momentum*self._prv_node_sg
+		self._slave_edge_up = (1.0 - self._momentum)*self._slave_edge_up + self._momentum*self._prv_edge_sg
+
 		# Compute the alpha for this step. 
 		if self._optim_strategy is 'step':
 			alpha	= a_start/np.sqrt(it)
@@ -1166,6 +1188,9 @@ class Lattice:
 			 	# Edge updates have been marked. 
 				n_edges_this_slave = self.slave_list[s_id].edge_list.size
 				self.slave_list[s_id].edge_energies += alpha*np.reshape(self._slave_edge_up[s_id,:n_edges_this_slave,:], [n_edges_this_slave,self.max_n_labels,self.max_n_labels])
+
+		self._prv_node_sg[:] = self._slave_node_up[:]
+		self._prv_edge_sg[:] = self._slave_edge_up[:]
 
 		return alpha
 
