@@ -1,7 +1,5 @@
 # dd_mrf_grid
 
-(code not yet complete)
-
 DD-MRF on a regular 2-D grid
 ============================
 
