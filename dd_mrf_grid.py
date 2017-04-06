@@ -255,7 +255,7 @@ class Lattice:
 		# If n_labels is an integer, we assume that all nodes should get the same max_n_label.
 		# Another option is to specify a list of max_n_labels. 
 		if type(n_labels) == np.int:
-			self.n_labels	= n_labels*np.ones(self.n_nodes).astype(np.int)
+			self.n_labels	= n_labels + np.zeros(self.n_nodes).astype(np.int)
 		elif np.array(n_labels).size == self.n_nodes:
 			self.n_labels	= np.array(n_labels).astype(np.int)
 		# In any case, the max n labels for this Lattice is np.max(self.n_lables)
@@ -1280,6 +1280,7 @@ class Lattice:
 			neighs = [x for x in neighs if x >= 0 and x < self.n_nodes and \
 		                                   not (n_id%self.cols == 0 and x-n_id == -1) and \
 				                           not (x%self.cols == 0 and x-n_id == 1)]
+			e_neighs = [self._edge_id_from_node_ids(n_id, x) if n_id < x else self._edge_id_from_node_ids(x, n_id) for x in neighs]
 			edge_conflicts[neighs] = True
 
 		# Update self._check_edges to reflect to be only these edges. 
@@ -1771,4 +1772,80 @@ def _generate_label_permutations(n_labels):
 		_ret += [[i] + _tt for _tt in _t]
 
 	return _ret
+# ---------------------------------------------------------------------------------------
 
+
+def generate_trees(adj_mat, max_depth=2):
+	'''
+	Generate a set of trees from a given adjacency matrix. The number of trees is
+	equal to the number of nodes in the graph. Each tree has diameter at most 2*max_depth.
+	'''
+
+	n_nodes = adj_mat.shape[0]
+	n_trees = n_nodes
+
+	tree_adjmats = np.zeros((n_trees, n_nodes, n_nodes), dtype=np.bool)
+	
+	for i in range(n_nodes):
+		tree_adjmats[i,:,:] = generate_tree_with_root(adj_mat, i, max_depth=max_depth)
+
+	return tree_adjmats
+# ---------------------------------------------------------------------------------------
+
+
+def generate_tree_with_root(adj_mat, root, max_depth=2):
+	'''
+	Generate a tree of max depth specified by max_depth, and with root specified by root. 
+	'''
+		
+	# Create a queue to traverse the graph in a bredth-first manner
+	# Each element is a pair, where the first of the pair specified the vertex, and the second 
+	#    specifies the depth. 
+	queue = [[root, 0]]
+
+	# The current depth of the tree. 
+	c_depth = 0
+
+	# The number of nodes. 
+	n_nodes = adj_mat.shape[0]
+	
+	# Create the output adjacency matrix. 
+	tree_adjmat = np.zeros((n_nodes, n_nodes), dtype=np.bool)
+
+	# Record whether we already visited a node. 
+	visited = np.zeros(n_nodes, dtype=np.bool)
+
+	# We have alredy visited root. 
+	visited[root] = True
+
+	while len(queue) > 0:
+		# The current root in the traversal. 
+		_v, _d = queue[0]
+		# Pop this vertex from the queue. 
+		queue = queue[1:]
+
+		# If we have reached the maximum allowed depth, stop, and backtrack.
+		if _d == max_depth:
+			continue
+		
+		# Neighbours of _v that we have not already visited. 
+		neighbours = [i for i in np.where(adj_mat[_v, :] == True)[0] if not visited[i]]
+
+		# If we have no more possible neighbours, stop and backtrack. 
+		if len(neighbours) == 0:
+			continue
+
+		# Mark all neighbours as visited. 
+		visited[neighbours] = True
+
+		# Add these edges to the adjacency matrix. 
+		tree_adjmat[_v, neighbours] = True
+
+		# Insert these in the queue. 
+		_next_nodes = [[_n, _d + 1] for _n in neighbours]
+		queue += _next_nodes	
+		
+	# Make adjacency matrix symmetric. 
+	tree_adjmat = tree_adjmat + tree_adjmat.T
+	# Return this adjcency matrix. 
+	return tree_adjmat
