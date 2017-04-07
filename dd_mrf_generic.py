@@ -337,11 +337,6 @@ class Graph:
 		specified by max_depth.
 		'''
 		
-		# The number of slaves
-		self.n_slaves = self.n_nodes
-		# The list of slaves.
-		self.slave_list = np.array([Slave() for i in range(self.n_slaves)])
-
 		# A list to record in which slaves each vertex and edge occurs. 
 		self.nodes_in_slaves = [[] for i in range(self.n_nodes)]
 		self.edges_in_slaves = [[] for i in range(self.n_edges)]
@@ -350,7 +345,12 @@ class Graph:
 		self._max_edges_in_slave = 0
 
 		# Create adjacency matrices. 
-		subtree_data = self._generate_trees(self.adj_mat, max_depth=max_depth)
+		subtree_data = self._generate_trees_greedy(self.adj_mat)
+
+		# The number of slaves
+		self.n_slaves = len(subtree_data)
+		# The list of slaves.
+		self.slave_list = np.array([Slave() for i in range(self.n_slaves)])
 
 		# Create each slave now. 
 		for s_id in range(self.n_slaves):
@@ -464,7 +464,7 @@ class Graph:
 
 		self.decomposition = decomposition
 
-		_naive_search = True
+		_naive_search = False
 
 		# Find the least "step" size in energy. This is given by the smallest difference
 		#   between any two energy energies in the Graph. 
@@ -572,7 +572,7 @@ class Graph:
 				%(self.subgradient_norms[-1], primal_cost, dual_cost, primal_cost-dual_cost, self._best_primal_cost - self._best_dual_cost)
 
 			# Switch to step strategy if n_miss = disagreements.size < 5% of number of nodes. 
-			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.000*self.n_nodes:
+			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.001*self.n_nodes:
 				print 'Switching to step strategy as n_miss < 0.1% of the number of nodes.'
 				a_start = alpha
 				self._optim_strategy = 'step'
@@ -830,6 +830,33 @@ class Graph:
 		_outputs = Parallel(n_jobs=n_cores)(delayed(_generate_tree_with_root)(i) for i in _inputs)
 
 		return _outputs
+
+	def _generate_trees_greedy(self, adj_mat):
+		'''
+		Generate trees in a greedy manner. The aim is to greedily generate trees starting at the first
+		node, so that each tree is as large as possible, and we can skip as many nodes for root as possible. 
+		'''
+		n_nodes = adj_mat.shape[0]
+
+		adj_mat_copy = np.zeros_like(adj_mat)
+		adj_mat_copy[:] = adj_mat[:]
+
+		# Set the max_depth to n_nodes, so that the maximum possible tree is discovered every time. 
+		max_depth = n_nodes
+
+		subtrees_data = []
+		for i in range(n_nodes):
+			if np.sum(adj_mat_copy[i,:]) == 0:
+				continue
+			_res = _generate_tree_with_root([adj_mat_copy, i, max_depth, self._edge_id_from_node_ids])
+			el = _res[2]	
+			# Remove already selected edges from adj_mat_copy.
+			for e in el:
+				i, j = self._node_ids_from_edge_id[e,:]
+				adj_mat_copy[i,j] = adj_mat_copy[j,i] = False
+			subtrees_data += [_res]
+
+		return subtrees_data
 
 
 	def _check_consistency(self):
