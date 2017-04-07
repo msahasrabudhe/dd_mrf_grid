@@ -20,73 +20,14 @@ class Slave:
 	'''
 	A class to store a slave. An instance of this class stores
 	the list of nodes it contains, the list of edges it contains, 
-	and the energies corresponding to all of them. The nodes are 
-	arranged as
-
-			0 ----- 1
-			|       |
-			|       |
-			2 ----- 3.
-	
-	if it is a cell, or as 
-
-	        0 --- 1 --- 2 --- 3 ...
-
-	if it is a tree. 
-
-	Members:
-		node_list:			List of nodes in this slave.
-		edge_list: 			List of edges in this slave. 
-		node_energies:		Energies for every label in the slave.
-							List of length 4 for cells. 
-		n_labels:			The number of labels for each node.
-							shape: (4,) for cells. 
-		edge_energies:		Energies for each edge arranged in the order
-							0-1, 0-2, 1-3, 2-3, obeying the vertex order 
-							as well (for cells).
-							List of length 4 for cells. 
-
-	Notes
-	=====
-	The node and edge lists have indices corresponding to the global indexing
-	of the lattice. The global indexing starts by labelling the top-left node 0
-	(that is, the node at [0,0]), then increments the node index in a row-major
-	fashion. The edge index follows the node index: as an edge is always from a 
-	lower node index to a higher node index, we greedily label edges starting
-	the 0-th node index. Hence, nodex index 0 has edges 0 and 1, node index 1 
-	has edges 2 and 3, and so on. One should note that node index (cols-1) has
-	only one edge: 2*(cols-1). Hence, all rows but the last one take up 
-	(2*cols - 1) edges. The last row takes only (cols - 1) edges, since 
-	it has no "down" edges. The total number of edges is according
-	to this numbering is, hence, 
-	
-		(rows - 1)*(2*cols - 1) + (cols - 1)
-	  = 2*rows*cols - rows - 2*cols + 1 + cols - 1
-	  = 2*rows*cols - rows - cols
-	  = rows*cols - rows + cols*rows - cols
-	  = rows*(cols - 1) + cols*(rows - 1), 
-
-	which matches the number of edges there are in the lattice. This implies
-	the edge between node x and node y has the index
-
-		t*(2*cols - 1) + 2*u + (y-x == 1)?1:0,
-
-	where t = floor(x/cols) and u = mod(x, cols). The last term implies
-	the "down" edge gets the lower index, while the "righ" edge gets
-	the higher index. Going in the other direction, an edge with index e 
-	is between two nodes x and y, where
-
-		t = floor(e/(2*cols - 1))
-		u = floor(mod(e, 2*cols - 1)/2)
-		x = t*cols + u
-		y = x + ((mod(e,2*cols - 1) - 2*u == 1)?1:cols).
-
+	the energies corresponding to all of them, and the structure
+	of the graph. 
 	'''
 	def __init__(self, node_list=None, edge_list=None, 
 			node_energies=None, n_labels=None, edge_energies=None, graph_struct=None, struct='cell'):
 		'''
 		Slave.__init__(): Initialise parameters for this slave, if given. 
-						  Parameters are None by default. 
+		                  Parameters are None by default. 
 		'''
 		if struct not in ['cell', 'tree']:
 			print 'Slave struct not recognised: %s.' %(struct)
@@ -187,102 +128,74 @@ class Slave:
 # ---------------------------------------------------------------------------------------
 
 
-class Lattice:
+class Graph:
 	'''
-	A class which serves as an API to create the required lattice. 
-	The class requires as input the height and width of the lattice when it is created. 
+	A class which serves as an API to create a graph. 
+	A Graph object can be created by specifying the number of nodes and the number of labels. 
 	Node energies and edge energies can be added later. Only after the addition of 
 	node and edge energies, can the user proceed to its optimisation. The optimisation
 	is done by first breaking the lattice into slaves (sub-graphs), and then iteratively solving
 	them according to the DD-MRF algorithm. 
-
-	Members:
-		rows:			The number of rows in the lattice. 
-		cols:			The number of columns in the lattice.
-
-	Notes
-	=====
-	The node and edge lists have indices corresponding to the global indexing
-	of the lattice. The global indexing starts by labelling the top-left node 0
-	(that is, the node at [0,0]), then increments the node index in a row-major
-	fashion. The edge index follows the node index: as an edge is always from a 
-	lower node index to a higher node index, we greedily label edges starting
-	the 0-th node index. Hence, nodex index 0 has edges 0 and 1, node index 1 
-	has edges 2 and 3, and so on. One should note that node index (cols-1) has
-	only one edge: 2*(cols-1). Hence, all rows but the last one take up 
-	(2*cols - 1) edges. The last row takes only (cols - 1) edges, since 
-	it has no "down" edges. The total number of edges is according
-	to this numbering is, hence, 
-	
-		(rows - 1)*(2*cols - 1) + (cols - 1)
-	  = 2*rows*cols - rows - 2*cols + 1 + cols - 1
-	  = 2*rows*cols - rows - cols
-	  = rows*cols - rows + cols*rows - cols
-	  = rows*(cols - 1) + cols*(rows - 1), 
-
-	which matches the number of edges there are in the lattice. This implies
-	the edge between node x and node y has the index
-
-		t*(2*cols - 1) + 2*u + (y-x == 1)?1:0,
-
-	where t = floor(x/cols) and u = mod(x, cols). The last term implies
-	the "down" edge gets the lower index, while the "right" edge gets
-	the higher index. Going in the other direction, an edge with index e 
-	is between two nodes x and y, where
-
-		t = floor(e/(2*cols - 1))
-		u = floor(mod(e, 2*cols - 1)/2)
-		x = t*cols + u
-		y = x + ((mod(e,2*cols - 1) - 2*u == 1)?1:cols).
-
 	'''
 
-	def __init__(self, rows, cols, n_labels):
+	def __init__(self, n_nodes, n_labels):
 		'''
-		Lattice.__init__(): Initialise the lattice to be of shape (rows, cols), with 
+		Graph.__init__(): Initialise the lattice to be of shape (rows, cols), with 
                             a node taking a maximum of n_labels. 
 		'''
 		# The rows, columns, and node indexing. 
-		self.rows		= rows
-		self.cols		= cols
-		self.n_nodes	= rows*cols
-		self.n_edges	= rows*(cols-1) + cols*(rows-1)
+		self.n_nodes    = n_nodes
 
 		# Adjacency matrix. 
-		self.adj_mat	= np.zeros((self.n_nodes, self.n_nodes), dtype=np.bool)
+		self.adj_mat    = np.zeros((self.n_nodes, self.n_nodes), dtype=np.bool)
 
 		# An array to store the final labels. 
-		self.labels		= np.zeros(self.n_nodes)
+		self.labels     = np.zeros(self.n_nodes)
+
+		# Set the number of edges to zero, as none have been added yet. 
+		# This number shall be gradually increased as edges are added. 
+		self.n_edges    = 0
+
+		# Create maps: V x V -> E and E -> V x V. 
+		# These give us the edge ID given two end-points, and vice-versa, respectively. 
+		self._edge_id_from_node_ids = np.zeros((self.n_nodes, self.n_nodes), dtype=np.int)
+		self._node_ids_from_edge_id = np.zeros((self.n_nodes*(self.n_nodes-1)/2, 2), dtype=np.int)
 
 		# To set the maximum number of labels, we consider what kind of input is n_labels. 
 		# If n_labels is an integer, we assume that all nodes should get the same max_n_label.
 		# Another option is to specify a list of max_n_labels. 
 		if type(n_labels) == np.int:
-			self.n_labels	= n_labels + np.zeros(self.n_nodes).astype(np.int)
+			self.n_labels   = n_labels + np.zeros(self.n_nodes).astype(np.int)
 		elif np.array(n_labels).size == self.n_nodes:
-			self.n_labels	= np.array(n_labels).astype(np.int)
-		# In any case, the max n labels for this Lattice is np.max(self.n_lables)
-		self.max_n_labels	= np.max(self.n_labels)
+			self.n_labels   = np.array(n_labels).astype(np.int)
+		# In any case, the max n labels for this Graph is np.max(self.n_lables)
+		self.max_n_labels   = np.max(self.n_labels)
 		
 		# Initialise the node and edge energies. 
-		self.node_energies	= np.zeros((self.n_nodes, self.max_n_labels))
-		self.edge_energies	= np.zeros((self.n_edges, self.max_n_labels, self.max_n_labels))
+		self.node_energies  = np.zeros((self.n_nodes, self.max_n_labels))
+		# Initialise edge energies to allow for maximum number of possible edges. We 
+		#   can later trim this matrix. 
+		self.edge_energies  = np.zeros((self.n_nodes*(self.n_nodes-1)/2, self.max_n_labels, self.max_n_labels))
 
-		# Flags set to ensure that node and edge energies have been set. If any energies
+		# Flags set to ensure that node energies have been set. If any energies
 		# 	have not been set, we cannot proceed to optimisation as the lattice is not complete. 
-		self.node_flags	= np.zeros(self.n_nodes, dtype=np.bool)
-		self.edge_flags	= np.zeros(self.n_edges, dtype=np.bool)
+		self.node_flags	    = np.zeros(self.n_nodes, dtype=np.bool)
 
 
 	def set_node_energies(self, i, energies):
 		'''
-		Lattice.set_node_energies(): Set the node energies for node i. 
+		Graph.set_node_energies(): Set the node energies for node i. 
 		'''
+		# Check if a valid index. 
+		if i < 0 or i >= self.n_nodes:
+			print 'Invalid index: %d.' %(i)
+			raise IndexError
+
 		# Convert the energy to a numpy array
 		energies = np.array(energies, dtype=e_dtype)
 
 		if energies.size != self.n_labels[i]:
-			print 'Lattice.set_node_energies(): The supplied node energies do not agree',
+			print 'Graph.set_node_energies(): The supplied node energies do not agree',
 			print '(%d) on the number of labels required (%d).' %(energies.size, self.n_labels[i])
 			raise ValueError
 
@@ -293,10 +206,20 @@ class Lattice:
 
 	def set_edge_energies(self, i, j, energies):
 		'''
-		Lattice.set_edge_energies(): Sets the edge energies for edge (i,j). The
+		Graph.set_edge_energies(): Sets the edge energies for edge (i,j). The
 		function first checks for the possibility of an edge between i and j, 
 		and makes the assignment only if such an edge is possible.
 		'''
+		# Convention: one can only specify edges from a lower index to a higher index. 
+		if j < i: 
+			print 'Please specify indices from a lower index to higher index. %d > %d here.' %(i, j)
+			raise ValueError
+
+		# Check that indices are not out of range. 
+		if i >= self.n_nodes or j >= self.n_nodes or i < 0 or j < 0:
+			print 'Graph.set_edge_energies(): At least one of the supplied edge indices is invalid (not in [0, n_nodes)).'
+			raise IndexError
+
 		# Convert indices to int, just in case ...
 		i = np.int(i)
 		j = np.int(j)
@@ -308,43 +231,34 @@ class Lattice:
 		input_shape		= list(energies.shape)
 		reqd_shape		= [self.n_labels[i], self.n_labels[j]]
 		if input_shape != reqd_shape:
-			print 'Lattice.set_edge_energies(): The supplied energies have invalid shape:',
+			print 'Graph.set_edge_energies(): The supplied energies have invalid shape:',
 			print '(%d, %d). It must be (%d, %d).' \
                          %(energies.shape[0], energies.shape[1], self.n_labels[i], self.n_labels[j])
 			raise ValueError
 
-		# Check that indices are not out of range. 
-		if i >= self.n_nodes or j >= self.n_nodes:
-			print 'Lattice.set_edge_energies(): At least one of the supplied edge indices is invalid.'
-			raise IndexError
-		# Check for the possibility of an edge. 
-		if (j - i != 1) and (j - i != self.cols):
-			# This signifies j is neither the node to the right of i, nor the node below i. 
-			print 'Lattice.set_edge_energies(): The supplied edge indices are not consistent - this 2D',
-			print 'lattice does not have an edge from %d to %d.' %(i, j)
-			raise ValueError
-
-		# We can proceed - everything is okay. 
-		edge_id	= self._edge_id_from_node_ids(i, j)
+		# edge_id is the self.n_edges. 
+		edge_id = self.n_edges
 
 		# Make assignment: set the edge energies. 
-		self.edge_energies[edge_id,:self.n_labels[i],:self.n_labels[j]]	= energies
+		self.edge_energies[edge_id,:,:]  = energies
 		# Mark this edge in the adjacency matrix. 
 		self.adj_mat[i,j] = self.adj_mat[j,i] = True
-		# Set edge flag to True.
-		self.edge_flags[edge_id]	= True
+
+		# Update maps: V x V -> E and E -> V x V. 
+		self._edge_id_from_node_ids[i,j]       = edge_id
+		self._edge_id_from_node_ids[j,i]       = edge_id
+		self._node_ids_from_edge_id[edge_id,:] = [i,j]
+
+		# Increment the number of edges. 
+		self.n_edges += 1
 
 
 	def check_completeness(self):
 		'''
-		Lattice.check_completeness(): Check whether all attributes of the lattice have been set.
-        This must return True before we proceed to optimisation.
+		Graph.check_completeness(): Check whether all nodes have been assigned energies.
 		'''
 		# Check whether all nodes have been set. 
 		if np.sum(self.node_flags) < self.n_nodes:
-			return False
-		# Check whether all edges have been set. 
-		if np.sum(self.edge_flags) < self.n_edges:
 			return False
 		# Everything is okay. 
 		return True
@@ -352,7 +266,7 @@ class Lattice:
 	
 	def _create_slaves(self, decomposition='cell', max_depth=5):
 		'''
-		Lattice._create_slaves(): Create slaves for this particular lattice.
+		Graph._create_slaves(): Create slaves for this particular lattice.
 		The default decomposition is 'cell'. If 'row_col' is specified, create a set of trees
 		instead - one for every row and every column. 
 		If 'rook' is specified, create one slave for every vertex - defined by permitted rook moves
@@ -375,9 +289,6 @@ class Lattice:
 
 		# Functions to call depending on which slave is chosen
 		_slave_funcs = {
-			'cell':    self._create_cell_slaves,
-			'row_col': self._create_row_col_slaves,
-			'rook':    self._create_rook_slaves,
 			'tree':    _make_create_tree_slaves(max_depth)
 		}
 		
@@ -418,315 +329,9 @@ class Lattice:
 
 		# That is it. The slaves are ready. 
 
-	def _create_cell_slaves(self):
-		'''
-		Lattice._create_cell_slaves(): Create a set of cell slaves - one slave for every 
-		cell in the lattice. There are (rows-1)*(cols-1) slaves. 
-		Convergence for this decomposition is slow, but the relaxation is tighter. 
-		'''
-		# The number of slaves.
-		self.n_slaves		= (self.rows - 1)*(self.cols - 1)
-		# Create empty slaves initially. 
-		self.slave_list		= [Slave() for i in range(self.n_slaves)]
-		
-		# The following lists record for every node and edge, to which 
-		#	slaves it belongs.
-		self.nodes_in_slaves	= [[] for i in range(self.n_nodes)]
-		self.edges_in_slaves	= [[] for i in range(self.n_edges)]
-		# This also means we can assign these values. 
-		self._max_nodes_in_slave = 4
-		self._max_edges_in_slave = 4
-
-		# Iterate over the number of slaves to create each one. 
-		slave_ids	= [[i,j] for i in range(self.rows-1) for j in range(self.cols-1)]
-
-		# Iterate over slave IDs to create slaves. 
-		for id_pair in slave_ids:
-			[i, j]	= id_pair
-			# The slave id. 
-			s_id	= i*(self.cols - 1) + j
-	
-			# A slave with id s_id, slave coordinates (i,j) 
-			# 	contains nodes with coordinates (i,j), (i+1,j), (i,j+1), and (i+1,j+1).
-			i_list		= np.array([i, i, i+1, i+1], dtype=np.int)
-			j_list		= np.array([j, j+1, j, j+1], dtype=np.int)
-			node_list	= i_list*self.cols + j_list
-
-			# The number of labels can be easily extracted from self.n_labels.
-			n_labels	= np.zeros(4, dtype=np.int)
-			n_labels[:]	= self.n_labels[node_list].astype(np.int)
-
-			# The included edges are (i,j)-(i,j+1), (i,j)-(i+1,j), 
-			#	(i,j+1)-(i+1,j+1), and (i+1,j)-(i+1,j+1), in that order. 
-			# We will make four IDs, e1, ..., e4, for the four edges in this slave. 
-			# These edges MUST be in the order specified above. 
-			e1			= self._edge_id_from_node_ids(node_list[0], node_list[1])			#	(i,j)-(i,j+1)
-			e2			= self._edge_id_from_node_ids(node_list[0], node_list[2])			#	(i,j)-(i+1,j)
-			e3			= self._edge_id_from_node_ids(node_list[1], node_list[3]) 			#	(i,j+1)-(i+1,j+1)
-			e4			= self._edge_id_from_node_ids(node_list[2], node_list[3])			#	(i+1,j)-(i+1,j+1)
-			edge_list	= np.array([e1, e2, e3, e4])
-	
-			# The node energies for this slave
-			node_energies	= np.zeros((4, self.max_n_labels), dtype=e_dtype) 
-			node_energies[:] = self.node_energies[node_list,:]
-	
-			# We now extract the edge energies, which are easy to extract as well, as we know
-			# 	the edge IDs for all edges in this slave. 
-			# e_label_list stores the required size of the energy matrix for edge in edge_list
-			e_label_list 	 = [(n_labels[0], n_labels[1]), \
-						   	    (n_labels[0], n_labels[2]), \
-							    (n_labels[1], n_labels[3]), \
-							    (n_labels[2], n_labels[3])]
-			edge_energies    = np.zeros((4, self.max_n_labels, self.max_n_labels), dtype=e_dtype)
-			edge_energies[:] = self.edge_energies[edge_list,:,:]
-	
-			# Make assignments for this slave. 
-			self.slave_list[s_id].set_params(node_list, edge_list, node_energies, n_labels, edge_energies, None, 'cell')
-
-			# Finally, add this slave the appropriate nodes_in_slaves, and edges_in_slaves.
-			for n_id in node_list:
-				self.nodes_in_slaves[n_id] 	+= [s_id]
-			for e_id in edge_list:
-				self.edges_in_slaves[e_id]	+= [s_id]
-
-		# For convenience, turn the individual lists in nodes_in_slaves and edges_in_slaves into numpy arrays. 
-		self.nodes_in_slaves	= [np.array(t) for t in self.nodes_in_slaves]
-		self.edges_in_slaves	= [np.array(t) for t in self.edges_in_slaves]
-
-			
-
-	def _create_row_col_slaves(self):
-		'''
-		Lattice._create_row_col_slaves(): Create a set of slaves - one for each row and each column.
-		There are hence (row + col) slaves. 
-		Convergence for this decomposition is faster but the relaxation is not as tight as 
-		the cell decomposition.
-		'''
-		# The number of slaves.
-		self.n_slaves		= self.rows + self.cols
-		# Create empty slaves initially. 
-		self.slave_list		= np.array([Slave() for i in range(self.n_slaves)])
-		
-		# The following lists record for every node and edge, to which 
-		#	slaves it belongs. A little-bit of hard-coding here. We know 
-		#   each node is in two slaves, while each edge is in just one. 
-		# More efficient than adding to lists. 
-		self.nodes_in_slaves	= [np.zeros(2,dtype=np.int) for i in range(self.n_nodes)]
-		self.edges_in_slaves	= [np.zeros(1,dtype=np.int) for i in range(self.n_edges)]
-		# This also means we can automatically assign these values:
-		self._max_nodes_in_slave = np.max([self.rows, self.cols])
-		self._max_edges_in_slave = self._max_nodes_in_slave - 1
-
-		# Iterate over the number of slaves to create each one. 
-		# The rows get preference in terms of ID. Slaves numbered 0 through self.rows-1 are 
-		#    row slaves, while those numbered self.rows to self.n_slaves-1 are column
-		#    slaves. 
-		slave_ids	= np.arange(self.n_slaves)
-
-		# Create adjacency matrix for row slaves. 
-		adj_row	= np.eye(self.cols, dtype=np.bool)			# A row slave as self.cols verticies. 
-		# Roll this matrix two ways so that it indicates edges between adjacent vertices. 
-		adj_row = np.roll(adj_row, 1, axis=1)
-		# Add to its transpose to make it symmetric. Then fix corner elements. 
-		adj_row = adj_row + adj_row.T
-		adj_row[0, -1]  = adj_row[-1, 0] = False
-
-		# Create adjacency matrix for column slaves. 
-		adj_col = np.eye(self.rows, dtype=np.bool)			# A column slave has self.rows vertices. 	
-		# Roll this matrix two ways so that it indicates edges between adjacent vertices. 
-		adj_col = np.roll(adj_col, 1, axis=1)
-		# Add to transpose to make it symmetric. Then fix corner elements. 
-		adj_col = adj_col + adj_col.T
-		adj_col[0, -1] = adj_col[-1, 0] = False
-
-		for s_id in slave_ids[:self.rows]:
-			# Create row slaves. 
-			node_list	= np.arange(self.cols*s_id, self.cols*(s_id+1))
-			edge_list	= np.zeros(self.cols - 1, dtype=np.int)
-
-			# The number of labels for each node in this slave. 
-			n_labels	= np.zeros(self.cols, dtype=np.int)
-			n_labels[:]	= self.n_labels[node_list][:]
-
-			node_energies = np.zeros((self.cols, self.max_n_labels), dtype=e_dtype)
-			edge_energies = np.zeros((self.cols-1, self.max_n_labels, self.max_n_labels), dtype=e_dtype)
-
-			# Extract node energies. 
-			node_energies[:] = self.node_energies[node_list,:]
-
-			# Extract edge energies. 
-			for i in range(self.cols-1):
-				x, y = node_list[i], node_list[i+1]
-				# ID of this edge. 
-				e_id			= self._edge_id_from_node_ids(x, y)
-				edge_list[i]	= e_id
-			edge_energies[:] = self.edge_energies[edge_list,:,:]
-
-			# Make graph structure. 
-			row_gs	= bp.make_graph_struct(adj_row, n_labels)
-			# Set parameters for this slave. 
-			self.slave_list[s_id].set_params(node_list, edge_list, node_energies, \
-					n_labels, edge_energies, row_gs, 'tree')
-			
-			# Finally, add this slave to the lists of all nodes in node_list
-			for n_id in node_list:
-				# This is the first time each node is being assigned a slave. Hence, the "[0]".
-				self.nodes_in_slaves[n_id][0]	= s_id
-			for e_id in edge_list:
-				# This is the first time these edges are being assigned to a slave. 
-				self.edges_in_slaves[e_id][0]	= s_id
-
-
-		for s_id in slave_ids[self.rows:]:
-			# Create column slaves. 	
-			node_list	= np.arange(0, self.rows)*self.cols + s_id - self.rows
-			edge_list	= np.zeros(self.rows - 1, dtype=np.int)
-
-			# The number of labels for each node in this slave. 
-			n_labels	= np.zeros(self.rows, dtype=np.int)
-			n_labels[:]	= self.n_labels[node_list][:]
-
-			node_energies = np.zeros((self.rows, self.max_n_labels), dtype=e_dtype)
-			edge_energies = np.zeros((self.rows-1, self.max_n_labels, self.max_n_labels), dtype=e_dtype)
-
-			# Extract node energies.
-			node_energies[:] = self.node_energies[node_list,:]
-
-			# Extract edge energies. 
-			for i in range(self.rows-1):
-				x, y = node_list[i], node_list[i+1]
-				# ID of this edge. 
-				e_id			= self._edge_id_from_node_ids(x, y)
-				edge_list[i]	= e_id 
-
-			edge_energies[:] = self.edge_energies[edge_list,:,:]
-
-			# Make graph structure. 
-			col_gs = bp.make_graph_struct(adj_col, n_labels)
-			# Set parameters for this slave. 
-			self.slave_list[s_id].set_params(node_list, edge_list, node_energies, \
-					n_labels, edge_energies, col_gs, 'tree')
-
-			# Finally, add this slave to the lists of all nodes in the node list
-			for n_id in node_list:
-				# Again - some hard-coding here. This is the second time a slave is being added to each node. 
-				# Hence, the "[1]".
-				self.nodes_in_slaves[n_id][1]	= s_id
-			for e_id in edge_list:
-				# This is the first time these edges are being assigned to a slave. 
-				self.edges_in_slaves[e_id][0]	= s_id
-
-	
-	def _create_rook_slaves(self):
-		'''
-		Lattice._create_rook_slaves(): Create slaves defined by all possible rook moves from a vertex, 
-		for every vertex. That is, for every vertex, create a slave that includes its entire row and its
-		entire column.
-		'''
-		# The number of slaves.
-		self.n_slaves		= self.rows*self.cols
-		# Create empty slaves initially. 
-		self.slave_list		= np.array([Slave() for i in range(self.n_slaves)])
-		
-		# The following lists record for every node and edge, to which 
-		#	slaves it belongs. A little-bit of hard-coding here. We know 
-		#   each node is in (self.rows+self.cols-1) slaves.
-		# More efficient than adding to lists. 
-		self.nodes_in_slaves	= [[] for i in range(self.n_nodes)]
-		self.edges_in_slaves	= [[] for i in range(self.n_edges)]
-		# This also means we can automatically assign these values:
-		self._max_nodes_in_slave = self.rows + self.cols - 1
-		self._max_edges_in_slave = self.rows + self.cols - 2
-
-		# Iterate over the number of slaves to create each one. 
-		# Slave IDs correspond to node IDs.
-		slave_ids	= np.arange(self.n_nodes)
-
-		# Create each slave. 
-		for s_id in slave_ids:
-			# Get the centre point. 
-			x, y = s_id/self.cols, s_id%self.cols
-
-			# Creating node and edge lists: 
-			# We add nodes on the same row first, then nodes on the same column. 
-			node_list = x*self.cols + np.arange(self.cols)
-			node_list = np.concatenate((node_list, np.array(range(x)+range(x+1,self.rows))*self.cols + y))
-
-			# Add edges in this row.
-			edge_list = [self._edge_id_from_node_ids(node_list[i], node_list[i+1]) for i in range(np.min([y+1,self.cols-1]))]
-			# Add edges from id_xy to its top and bottom neighbours. This is done because of the ordering restriction 
-			#    required by max-product BP. When adj_mat is flattened, the order in which True appears must signify
-			#    the order in which edges appear in edge_pot. Hence, we must add these edges here, and, consequently, 
-			#    add the edge energies also in the same order as these edges. 
-			if x > 0:
-				tn_id     = self.cols + x - 1
-				edge_list += [self._edge_id_from_node_ids(node_list[tn_id], node_list[y])]		# Top neighbour. 
-			if x + 1 < self.rows:
-				bn_id     = self.cols + x
-				edge_list += [self._edge_id_from_node_ids(node_list[y], node_list[bn_id])]		# Bottom neighbour. 
-
-			edge_list += [self._edge_id_from_node_ids(node_list[i], node_list[i+1]) for i in range(y+1,self.cols-1)]
-			# Add edges in this column. 
-			_edges_column = [[i, i+1] for i in range(self.cols, node_list.size-1)
-	                          if (node_list[i+1] - node_list[i] == self.cols)]
-			edge_list += [self._edge_id_from_node_ids(node_list[e[0]], node_list[e[1]]) for e in _edges_column]
-			edge_list = np.array(edge_list, dtype=np.int)
-
-			# The number of labels for each node in this slave
-			n_labels    = np.zeros(node_list.size, dtype=np.int)
-			n_labels[:] = self.n_labels[node_list]	
-
-			# Create node and edge energies
-			node_energies = np.zeros((node_list.size, self.max_n_labels))
-			edge_energies = np.zeros((edge_list.size, self.max_n_labels, self.max_n_labels))
-
-			# Extract node and edge energies. 
-			node_energies[:] = self.node_energies[node_list,:]
-			edge_energies[:] = self.edge_energies[edge_list,:,:]
-
-			# Create adjacency matrix. 
-			adj_mat = np.zeros((node_list.size, node_list.size), dtype=np.bool)
-			# Add edges for the "row part" of the rook. 
-			adj_mat[:self.cols,:self.cols] = np.roll(np.eye(self.cols,dtype=np.bool), 1, axis=1)
-			adj_mat[self.cols-1, 0]        = False 			# Fix the incorrect `True` introduced by np.roll
-			# Add top neighbour of id_xy.
-			if x > 0:
-				adj_mat[y, tn_id] = True
-			# Add bottom neighbour of id_xy.
-			if x + 1 < self.rows:
-				adj_mat[y, bn_id] = True
-			# Add edges for the "column part" of the rook.
-			for e in _edges_column:
-				adj_mat[e[0],e[1]] = True
-			# Finally, make adjacency matrix symmetric.
-			adj_mat = adj_mat + adj_mat.T
-
-			# TODO: Issues so far:
-			# 1. create adjacency matrix. 
-			# 2. bp.py assumes that edge_pot are received so that they agree with the ordering in adj_mat,
-			#    that is, if adj_mat is row-first flattened, the `True`s will appear in the same order as
-			#    the specified edge_energies. 
-
-			# Make graph structure. 
-			row_gs	= bp.make_graph_struct(adj_mat, n_labels)
-			# Set parameters for this slave. 
-			self.slave_list[s_id].set_params(node_list, edge_list, node_energies, \
-					n_labels, edge_energies, row_gs, 'tree')
-
-			# Finally, add this slave to the lists of all nodes in the node list
-			for n_id in node_list:
-				self.nodes_in_slaves[n_id] += [s_id]
-			for e_id in edge_list:
-				self.edges_in_slaves[e_id] += [s_id]
-
-		# For convenience, turn the individual lists in nodes_in_slaves and edges_in_slaves into numpy arrays. 
-		self.nodes_in_slaves	= [np.array(t) for t in self.nodes_in_slaves]
-		self.edges_in_slaves	= [np.array(t) for t in self.edges_in_slaves]
-
-
 	def _create_tree_slaves(self, max_depth=5):
 		'''
-		Lattice._create_tree_slaves: Create a list of tree-structured sub-problems. 
+		Graph._create_tree_slaves: Create a list of tree-structured sub-problems. 
 		The number of such sub-problems created shall be equal to the number of nodes
 		in the graph. Each tree is rooted at a unique vertex, and has maximum depth
 		specified by max_depth.
@@ -745,25 +350,35 @@ class Lattice:
 		self._max_edges_in_slave = 0
 
 		# Create adjacency matrices. 
-		subtree_adjmats, subtree_nodelists, subtree_edgelists = self.generate_tree(self.adj_mat, max_depth=max_depth)
+		subtree_data = self._generate_trees(self.adj_mat, max_depth=max_depth)
 
 		# Create each slave now. 
 		for s_id in range(self.n_slaves):
 			# Extract the adjacency matrices for this slave. 
-			tree_adj  = subtree_adjmats[s_id]
-			node_list = subtree_nodelists[s_id]
-			edge_list = subtree_edgelists[s_id]
+			tree_adj  = subtree_data[s_id][0]
+			node_list = np.array(subtree_data[s_id][1], dtype=np.int)
+			edge_list = np.array(subtree_data[s_id][2], dtype=np.int)
+
+			# Number of nodes and edges in this tree. 
+			n_nodes = len(node_list)
+			n_edges = len(edge_list)
+
+			# Update self._max_nodes_in_slave, and self._max_edges_in_slave
+			if self._max_nodes_in_slave < n_nodes:
+				self._max_nodes_in_slave = n_nodes
+			if self._max_edges_in_slave < n_edges:
+				self._max_edges_in_slave = n_edges
 
 			# Extract node energies. 
-			node_energies    = np.zeros((len(node_list), self.max_n_labels), dtype=e_dtype)
+			node_energies    = np.zeros((n_nodes, self.max_n_labels), dtype=e_dtype)
 			node_energies[:] = self.node_energies[node_list,:]
 
 			# Extract edge energies.
-			edge_energies    = np.zeros((len(edge_list), self.max_n_labels, self.max_n_labels), dtype=e_dtype)
+			edge_energies    = np.zeros((n_edges, self.max_n_labels, self.max_n_labels), dtype=e_dtype)
 			edge_energies[:] = self.edge_energies[edge_list,:,:]
 
 			# The number of labels for each node here. 
-			n_labels         = np.zeros(len(node_list), dtype=np.int)
+			n_labels         = np.zeros(n_nodes, dtype=np.int)
 			n_labels[:]      = self.n_labels[node_list]
 
 			# Create graph structure. 
@@ -782,12 +397,12 @@ class Lattice:
 		# Numpy arrays. 
 		self.nodes_in_slaves = [np.array(t) for t in self.nodes_in_slaves]
 		self.edges_in_slaves = [np.array(t) for t in self.edges_in_slaves]
-		# C'est ça. 
+		# C'est ca.
 
 
-	def optimise(self, a_start=1.0, max_iter=1000, decomposition='cell', strategy='step', _momentum=0.0, _verbose=True):
+	def optimise(self, a_start=1.0, max_iter=1000, decomposition='tree', strategy='step', max_depth=2, _momentum=0.0, _verbose=True):
 		'''
-		Lattice.optimise(): Optimise the set energies over the lattice and return a labelling. 
+		Graph.optimise(): Optimise the set energies over the lattice and return a labelling. 
 
 		Takes as input a_start, which is a float and denotes the starting value of \\alpha_t in
 		the DD-MRF algorithm. 
@@ -810,8 +425,8 @@ class Lattice:
 		'''
 
 		# Check if a permissible decomposition is used. 
-		if decomposition not in ['cell', 'row_col', 'rook']:
-			print 'Permissible values for decomposition are \'cell\' and \'row_col\'.'
+		if decomposition not in ['tree']:
+			print 'Permissible values for decomposition is \'tree\'.'
 			raise ValueError
 
 		# Check if a permissible strategy is being used. 
@@ -835,11 +450,14 @@ class Lattice:
 
 		# First check if the lattice is complete. 
 		if not self.check_completeness():
-			n_list, e_list	= self._find_empty_attributes()
-			print 'Lattice.optimise(): The lattice is not complete.'
+			n_list = np.where(self.node_flags == False)
+			print 'Graph.optimise(): The graph is not complete.'
 			print 'The following nodes are not set:', n_list
-			print 'The following edges are not set:', e_list
 			raise AssertionError
+
+		# Trim edge energies and V - > E x E and E x E -> V maps. 
+		self.edge_energies			= self.edge_energies[:self.n_edges,:,:]
+		self._node_ids_from_edge_id = self._node_ids_from_edge_id[:self.n_edges,:]
 
 		# Set the optimisation strategy. 
 		self._optim_strategy = strategy
@@ -849,8 +467,8 @@ class Lattice:
 		_naive_search = True
 
 		# Find the least "step" size in energy. This is given by the smallest difference
-		#   between any two energy energies in the Lattice. 
-		# HACK: If the difference between primal and dual energies at 
+		#   between any two energy energies in the Graph. 
+		# TODO HACK: If the difference between primal and dual energies at 
 		#   an iteration is smaller than this step size, we can safely 
 		#   perform a naive search on the conflicting nodes, and choose the smallest
 		#   energy. 
@@ -864,7 +482,7 @@ class Lattice:
 		# 	self.slave_list. The numbering of the slaves starts from the top-left,
 		# 	and continues in row-major fashion. For example, there are 
 		#   (self.rows-1)*(self.cols-1) slaves if the 'cell' decomposition is used. 
-		self._create_slaves(decomposition=self.decomposition)
+		self._create_slaves(decomposition=self.decomposition, max_depth=max_depth)
 
 		# Create update variables for slaves. Created once, reset to zero each time
 		#   _apply_param_updates() is called. 
@@ -991,7 +609,7 @@ class Lattice:
 #		for s in _to_solve:
 #			optima += [_optimise_slave(s)]
 
-		# Reflect the result in slave list for our Lattice. 
+		# Reflect the result in slave list for our Graph. 
 		for i in range(self._slaves_to_solve.size):
 			s_id = self._slaves_to_solve[i]
 			self.slave_list[s_id].set_labels(optima[i][0])
@@ -1000,7 +618,7 @@ class Lattice:
 				self.slave_list[s_id]._messages = optima[i][2]
 #			self.slave_list[s_id]._compute_energy()
 
-	# End of Lattice._optimise_slaves()
+	# End of Graph._optimise_slaves()
 
 	
 	def _apply_param_updates(self, a_start, it):
@@ -1011,7 +629,7 @@ class Lattice:
 		# Flags to determine whether to solve a slave.
 		slave_flags	= np.zeros(self.n_slaves, dtype=bool)
 
-		# Compute the L2-norm of the subgradient. 
+		# The L2-norm of the subgradient. This is calculated incrementally.
 		norm_gt	= 0.0
 
 		# Change of strategy here: Instead of iterating over all labels, we create 
@@ -1034,7 +652,6 @@ class Lattice:
 			n_slaves_nid	= s_ids.size
 	
 			# Retrieve labels assigned to this point by each slave, and make it into a one-hot vector. 
-	#			ls_		= [self.slave_list[s].get_node_label(n_id) for s in s_ids]
 			ls_		= np.array([make_one_hot(self.slave_list[s].get_node_label(n_id), self.n_labels[n_id]) for s in s_ids])
 			ls_avg_	= np.mean(ls_, axis=0)
 	
@@ -1064,46 +681,6 @@ class Lattice:
 			# Mark this slave for node updates. 
 			self._mark_sl_up[0, s_ids] = True
 	
-			# Iterate over all labels. The update to the energy of label l_id is given by
-			#
-			#		\delta_l_id	= \alpha*(x_s(l_id) - \frac{\sum_s' x_s'(l_id)}{\sum_s' 1})
-			#
-	#			for l_id in np.unique(ls_):#(self.n_labels[n_id]):
-	#				# Find slaves that assign this point the label l_id. 
-	#				slaves_with_this_l_id		= np.array([s_ids[i] for i in np.where(ls_ == l_id)[0]])
-	#				slaves_without_this_l_id	= np.array([s_ids[i] for i in np.where(ls_ != l_id)[0]])
-	#
-	#				# Calculate updates, given by the equation above. 
-	#				l_id_delta		= 1.0 - (slaves_with_this_l_id.size*1.0)/s_ids.size
-	#				no_l_id_delta	= l_id_delta - 1.0 # alpha*(-1.0*(slaves_without_this_l_id.size*1.0)/s_ids.size)
-	#
-	#				# Mark the l_id_delta update ...
-	#				_node_up = [[s_l_id, self.slave_list[s_l_id].node_map[n_id], l_id, l_id_delta] for s_l_id in slaves_with_this_l_id]
-	#				node_updates += _node_up
-	#				#   ... and the no_l_id_delta update. 
-	#				_node_up = [[s_nl_id, self.slave_list[s_nl_id].node_map[n_id], l_id, no_l_id_delta] for s_nl_id in slaves_without_this_l_id]
-	#				node_updates += _node_up
-	#
-	#				# Add these updates to the L2 norm of the subgradient. 
-	#				norm_gt += len(slaves_with_this_l_id)*(l_id_delta**2)
-	#				norm_gt += len(slaves_without_this_l_id)*(no_l_id_delta**2)
-	
-				# For all slaves which assign n_id the label l_id, we apply
-				# 	the update l_id_delta for the node energy corresponding to the label l_id. 
-				# For all other slaves, we apply the update no_l_id_delta. 
-	#				for s_l_id in slaves_with_this_l_id:
-	#					n_id_in_s = self.slave_list[s_l_id].node_map[n_id]
-	#					self.slave_list[s_l_id].node_energies[n_id_in_s][l_id] += alpha*l_id_delta
-	#					# Add to the current subgradient. 
-	#					norm_gt += l_id_delta**2
-	#				for s_nl_id in slaves_without_this_l_id:
-	#					n_id_in_s = self.slave_list[s_nl_id].node_map[n_id]
-	#					self.slave_list[s_nl_id].node_energies[n_id_in_s][l_id] += alpha*no_l_id_delta
-	#					# Add to the current subgradient. 
-	#					norm_gt += no_l_id_delta**2
-	
-				# Set flags for these slaves to True
-	
 		# That completes the updates for node energies. Now we move to edge energies. 
 		for e_id in self._check_edges:
 			# Retrieve the list of slaves that use this edge. 
@@ -1111,7 +688,7 @@ class Lattice:
 			n_slaves_eid	= s_ids.size
 	
 			# Retrieve labellings of this edge, assigned by each slave.
-			x, y	= self._node_ids_from_edge_id(e_id)
+			x, y	= self._node_ids_from_edge_id[e_id,:]
 			ls_		= np.array([
 						make_one_hot([self.slave_list[s].get_node_label(x), self.slave_list[s].get_node_label(y)], self.n_labels[x], self.n_labels[y]) 
 						for s in s_ids])
@@ -1143,89 +720,6 @@ class Lattice:
 			# Mark this slave for edge updates. 
 			self._mark_sl_up[1, s_ids] = True
 
-#			# If we reach this stage, we have an edge shared between two trees, with both of them
-#			#    assigning it different labels. A little bit of hard-coding goes a long way in improving 
-#			#    performance. 
-#			lx_1, ly_1	= ls_[0]
-#			lx_2, ly_2	= ls_[1]
-#
-#			s_1	= s_ids[0]
-#			s_2	= s_ids[1]
-#
-#			e_id_s_1	= self.slave_list[s_1].edge_map[e_id]
-#			e_id_s_2	= self.slave_list[s_2].edge_map[e_id]
-#
-#			# Mark updates. 
-#			_edge_up = [[s_1, e_id_s_1, lx_2, ly_2, -0.5]]
-#			_edge_up += [[s_2, e_id_s_2, lx_1, ly_1, -0.5]]
-#			_edge_up += [[s_1, e_id_s_1, lx_1, ly_1, 0.5]]
-#			_edge_up += [[s_2, e_id_s_2, lx_2, ly_2, 0.5]]
-#
-#			# Add to the norm of the subgradient. 
-#			norm_gt += 4*(0.5**2)
-
-#			self.slave_list[s_1].edge_energies[e_id_s_1][lx_2][ly_2]	-= alpha/2
-#			self.slave_list[s_2].edge_energies[e_id_s_2][lx_1][ly_1]	-= alpha/2
-#
-#			self.slave_list[s_1].edge_energies[e_id_s_1][lx_1][ly_1]	+= alpha/2
-#			self.slave_list[s_2].edge_energies[e_id_s_2][lx_2][ly_2]	+= alpha/2
-#
-#			# Add to the norm of the subgradient. 
-#			norm_gt += 4*(0.5**2)
-
-#		# Distribute the computation of node and edge updates, as they can be done independantly. 
-#		n_cores = cpu_count() - 1
-#
-#		# Collect node updates in node_updates, as returned by _compute_node_updates().
-#		# Create input list first. 
-#		_node_up_inputs = [[i, self.nodes_in_slaves[i], self.slave_list[self.nodes_in_slaves[i]], self.n_labels[i]]
-#		        for i in range(self.n_nodes) if self._n_slaves_nodes[i] > 1]
-#		# Distribute.
-#		node_updates = Parallel(n_jobs=n_cores)(delayed(_compute_node_updates)(i) for i in _node_up_inputs)
-#
-#		# Collect edge updates in edge_updates, as returned by _compute_edge_updates(). 
-#		# Create input list first. 
-#		_edge_up_inputs = [[e, self.nodes_in_slaves[e], self.slave_list[self.nodes_in_slaves[e]], self._node_ids_from_edge_id(e), 
-#		                   [self.n_labels[self._node_ids_from_edge_id(e)[0]], self.n_labels[self._node_ids_from_edge_id(e)[1]]]]
-#						   for e in range(self.n_edges) if self._n_slaves_edges[e] > 1]
-#		# Distribute only if there are shared edges (some decompositions, for example, row_col, do not have any shared edges).
-#		if len(_edge_up_inputs) > 0:
-#			edge_updates = Parallel(n_jobs=n_cores)(delayed(_compute_edge_updates)(i) for i in _edge_up_inputs)
-#
-#		# Now store obtained values in self._slave_node_up, and self._slave_edge_up. 
-#		# Meanwhile, also compute the total subgradient. 
-#		for _nu in range(len(node_updates)):
-#			_node_ret = node_updates[_nu]
-#			# Check if any updates need to be made.
-#			if not _node_ret[0]: 
-#				continue
-#
-#			_node_in  = _node_up_inputs[_nu]
-#
-#			# Record slave updates. 
-#			self._slave_node_up[_node_in[1], _node_ret[2], 0:n_labels[n_id]] = _node_ret[1]
-#			# Add subgradient.
-#			norm_gt += _node_ret[3]
-#			# Mark updates. 
-#			self._mark_sl_up[0, _node_in[1]] = True
-#		
-#		# Do the same for edge updates. 
-#		for _eu in range(len(edge_updates)):
-#			_edge_ret = edge_updates[_eu]
-#			# Check if any updates need to be done. 
-#			if not _edge_ret[0]:
-#				continue
-#
-#			_edge_in = _edge_up_inputs[_eu]
-#
-#			# Record slave updates. 
-#			lx, ly = _edge_in[4]
-#			self._slave_edge_up[_edge_in[1], _edge_ret[2], 0:lx*ly] = _edge_ret[1]
-#			# Add subgradient. 
-#			norm_gt += _edge_ret[3]
-#			# Mark updates. 
-#			self._mark_sl_up[1, _edge_in[1]] = True
-
 		# Reset the slaves to solve. 
 		self._slaves_to_solve = np.where(np.sum(self._mark_sl_up, axis=0)!=0)[0]
 
@@ -1233,14 +727,15 @@ class Lattice:
 		self.subgradient_norms += [norm_gt]
 
 		# Add momentum.
-		self._slave_node_up = (1.0 - self._momentum)*self._slave_node_up + self._momentum*self._prv_node_sg
-		self._slave_edge_up = (1.0 - self._momentum)*self._slave_edge_up + self._momentum*self._prv_edge_sg
+		if it > 1:
+			self._slave_node_up = (1.0 - self._momentum)*self._slave_node_up + self._momentum*self._prv_node_sg
+			self._slave_edge_up = (1.0 - self._momentum)*self._slave_edge_up + self._momentum*self._prv_edge_sg
 
 		# Compute the alpha for this step. 
 		if self._optim_strategy is 'step':
 			alpha	= a_start/np.sqrt(it)
 		elif self._optim_strategy is 'step_ss':
-			alpha   = a_start/(1 + it)
+			alpha   = a_start/(1.0 + it)
 		elif self._optim_strategy is 'step_sg':
 			alpha   = a_start/np.sqrt(it)
 			alpha   = alpha*1.0/norm_gt
@@ -1264,6 +759,7 @@ class Lattice:
 				n_edges_this_slave = self.slave_list[s_id].edge_list.size
 				self.slave_list[s_id].edge_energies += alpha*np.reshape(self._slave_edge_up[s_id,:n_edges_this_slave,:], [n_edges_this_slave,self.max_n_labels,self.max_n_labels])
 
+		# Copy the subgradient for the next iteration. 
 		self._prv_node_sg[:] = self._slave_node_up[:]
 		self._prv_edge_sg[:] = self._slave_edge_up[:]
 
@@ -1315,7 +811,7 @@ class Lattice:
 		plt.show()
 
 
-	def _generate_trees(adj_mat, max_depth=2):
+	def _generate_trees(self, adj_mat, max_depth=2):
 		'''
 		Generate a set of trees from a given adjacency matrix. The number of trees is
 		equal to the number of nodes in the graph. Each tree has diameter at most 2*max_depth.
@@ -1327,90 +823,13 @@ class Lattice:
 		sliced_adjmats = []
 		node_lists     = []
 		edge_lists     = []
+
+		n_cores = cpu_count() - 1
 		
-		for i in range(n_nodes):
-			_sliced, _nl, _el = _generate_tree_with_root(adj_mat, i, max_depth=max_depth)
+		_inputs  = [[adj_mat, i, max_depth, self._edge_id_from_node_ids] for i in range(n_nodes)]
+		_outputs = Parallel(n_jobs=n_cores)(delayed(_generate_tree_with_root)(i) for i in _inputs)
 
-			sliced_adjmats += [_sliced]
-			node_lists     += [_nl]
-			edge_list      += [_el]
-	
-		return sliced_adj_mats, node_lists, edge_lists
-	# ---------------------------------------------------------------------------------------
-	
-	
-	def _generate_tree_with_root(adj_mat, root, max_depth=2):
-		'''
-		Generate a tree of max depth specified by max_depth, and with root specified by root. 
-		'''
-			
-		# Create a queue to traverse the graph in a bredth-first manner
-		# Each element is a pair, where the first of the pair specified the vertex, and the second 
-		#    specifies the depth. 
-		queue = [[root, 0]]
-	
-		# The current depth of the tree. 
-		c_depth = 0
-	
-		# The number of nodes. 
-		n_nodes = adj_mat.shape[0]
-		
-		# Create the output adjacency matrix. 
-		tree_adjmat = np.zeros((n_nodes, n_nodes), dtype=np.bool)
-	
-		# Record whether we already visited a node. 
-		visited = np.zeros(n_nodes, dtype=np.bool)
-	
-		# We have alredy visited root. 
-		visited[root] = True
-
-		# The node list for this subgraph. 
-		node_list = None
-		# The edge list for this subgraph. 
-		edge_list = None
-	
-		while len(queue) > 0:
-			# The current root in the traversal. 
-			_v, _d = queue[0]
-			# Pop this vertex from the queue. 
-			queue = queue[1:]
-	
-			# If we have reached the maximum allowed depth, stop, and backtrack.
-			if _d == max_depth:
-				continue
-			
-			# Neighbours of _v that we have not already visited. 
-			neighbours = [i for i in np.where(adj_mat[_v, :] == True)[0] if not visited[i]]
-	
-			# If we have no more possible neighbours, stop and backtrack. 
-			if len(neighbours) == 0:
-				continue
-	
-			# Mark all neighbours as visited. 
-			visited[neighbours] = True
-	
-			# Add these edges to the adjacency matrix. 
-			tree_adjmat[_v, neighbours] = True
-	
-			# Insert these in the queue. 
-			_next_nodes = [[_n, _d + 1] for _n in neighbours]
-			queue += _next_nodes	
-
-		# The node list can be obtained directly from visited. 
-		node_list = np.where(visited == True)[0].astype(np.int)
-
-		# These are the edge ends. 
-		edge_ends = np.where(tree_adjmat == True)
-		edge_list = [self._edge_id_from_node_ids(e0,e1) for e0, e1 in zip(edge_ends[0], edge_ends[1])]
-	
-		# Make adjacency matrix symmetric. 
-		tree_adjmat = tree_adjmat + tree_adjmat.T
-	
-		# Also create a sliced matrix, only from the visited nodes. 
-		_sliced = tree_adjmat[node_list, node_list]
-	
-		# Return this adjcency matrix. 
-		return _sliced, node_list, edge_list
+		return _outputs
 
 
 	def _check_consistency(self):
@@ -1449,11 +868,9 @@ class Lattice:
 		#    neighbours of a node in _check_nodes. 
 		for i in range(self._check_nodes.size - 1):
 			n_id = self._check_nodes[i]
-			neighs = [n_id + x for x in [-self.cols, -1, 1, self.cols]]
-			neighs = [x for x in neighs if x >= 0 and x < self.n_nodes and \
-		                                   not (n_id%self.cols == 0 and x-n_id == -1) and \
-				                           not (x%self.cols == 0 and x-n_id == 1)]
-			edge_conflicts[neighs] = True
+			neighs = np.where(self.adj_mat[i,:] == True)[0]
+			e_neighs = [self._edge_id_from_node_ids[n_id, _n] for _n in neighs]
+			edge_conflicts[e_neighs] = True
 
 		# Update self._check_edges to reflect to be only these edges. 
 		self._check_edges = np.where(edge_conflicts == True)[0].astype(np.int)
@@ -1463,10 +880,10 @@ class Lattice:
 
 	def _assign_labels(self):
 		'''
-		Assign the final labels to all points. This function must be called if Lattice._check_consistency() returns 
+		Assign the final labels to all points. This function must be called if Graph._check_consistency() returns 
 		True. This function simply assigns to every node, the label assigned to it by the first
 		slave in its own slave list. Thus, if called without checking consistency first, or even if
-		Lattice._check_consistency() returned False, it is not guaranteed that this function
+		Graph._check_consistency() returned False, it is not guaranteed that this function
 		will return the correct labels. 
 		Also computes the primal cost for the final labelling. 
 		'''
@@ -1520,7 +937,7 @@ class Lattice:
 						np_id = n_id + offset
 						# Check if the node lies to the left or the right of n_id in node_order
 						i, j = np.min([n_id, np_id]), np.max([n_id, np_id])
-						e_id = self._edge_id_from_node_ids(i, j)
+						e_id = self._edge_id_from_node_ids[i, j]
 						r, c = n_id/self.cols, n_id%self.cols
 
 						if np_id in node_order[:i]:
@@ -1569,7 +986,7 @@ class Lattice:
 			cost += self.node_energies[n_id][labels[n_id]]
 
 		# Compute the edge list
-		edge_list	= [self._node_ids_from_edge_id(e_id) for e_id in range(self.n_edges)]
+		edge_list	= [self._node_ids_from_edge_id[e_id] for e_id in range(self.n_edges)]
 		# Compute edge contributions. 
 		for e_id in range(self.n_edges):
 			e = edge_list[e_id]
@@ -1580,25 +997,6 @@ class Lattice:
 		return cost
 
 
-	def _edge_id_from_node_ids(self, x, y):
-		'''
-		Lattice._edge_id_from_node_ids(): Return the edge ID given the nodes it connects. 
-		'''
-		t		= x/self.cols
-		u		= x % self.cols
-		edge_id	= (2*self.cols - 1)*t
-
-		# Boundary conditions: If this is an edge originating in the last row of the lattice, 
-		#	it can only be a "right" edge. Hence, the "right" edge in this case gets the 
-		#	0 index. We must adjust for this. 
-		if t == self.rows - 1:
-			edge_id	+= u			# There is only one edge for every node (except the last).
-		else:
-			edge_id	+= 2*u			# There are two edges for each node (except the last).
-			edge_id	+= 1 if (y - x) == 1 else 0
-		return edge_id
-
-	
 	def _primal_dual_gap(self):
 		'''
 		Return the primal dual gap at the current stage of the optimisation.
@@ -1606,27 +1004,9 @@ class Lattice:
 		return self._compute_primal_cost() - self._compute_dual_cost()
 
 
-	def _node_ids_from_edge_id(self, e):
-		'''
-		Lattice._node_ids_from_edge_id(): Return the node IDs which are connected by a given edge.
-		'''
-		t	= e/(2*self.cols - 1)
-		# The last row has only one edge per node. We must adjust for this in the
-		#	expression for u below. 
-		if t == self.rows - 1:
-			u	= e%(2*self.cols-1)
-			x	= t*self.cols + u
-			y	= x + 1
-		else:
-			u	= (e%(2*self.cols - 1))/2
-			x	= t*self.cols + u
-			y	= x + (self.cols if (e%(2*self.cols - 1)) - 2*u == 0 else 1)
-		return [x, y]
-
-
 	def _find_empty_attributes(self):
 		'''
-		Lattice._find_empty_attributes(): Returns the list of attributes not set. 
+		Graph._find_empty_attributes(): Returns the list of attributes not set. 
 		'''
 		# Retrieve the indices for nodes and edges not set. 
 		n	= np.where(self.node_flags == False)[0]
@@ -1645,7 +1025,7 @@ def _compute_node_updates(n_id, s_ids, slave_list, n_labels_nid):
 	'''
 	A function to handle parallel computation of node updates. 
 	The entire lattice cannot be passed as a parameter to this function, 
-	and so we must create a function that is not a member of the class Lattice.
+	and so we must create a function that is not a member of the class Graph.
 	'''
 	# The number of slaves.
 	n_slaves_nid	= s_ids.size
@@ -1688,7 +1068,7 @@ def _compute_edge_updates(e_id, s_ids, slave_list, pt_coords, n_labels):
 	'''
 	A function to handle parallel computation of edge updates. 
 	The entire lattice cannot be passed as a parameter to this function, 
-	and so we must create a function that is not a member of the class Lattice.
+	and so we must create a function that is not a member of the class Graph.
 	'''
 	# The number of slaves that this edge belongs to. 
 	n_slaves_eid	= s_ids.size
@@ -1945,5 +1325,85 @@ def _generate_label_permutations(n_labels):
 
 	return _ret
 # ---------------------------------------------------------------------------------------
+	
+
+def _generate_tree_with_root(_in):
+	'''
+	Generate a tree of max depth specified by max_depth, and with root specified by root. 
+	'''
+
+	adj_mat                = _in[0]
+	root                   = _in[1]
+	max_depth              = _in[2]
+	_edge_id_from_node_ids = _in[3]
+
+	# Create a queue to traverse the graph in a bredth-first manner
+	# Each element is a pair, where the first of the pair specified the vertex, and the second 
+	#    specifies the depth. 
+	queue = [[root, 0]]
+
+	# The current depth of the tree. 
+	c_depth = 0
+
+	# The number of nodes. 
+	n_nodes = adj_mat.shape[0]
+	
+	# Create the output adjacency matrix. 
+	tree_adjmat = np.zeros((n_nodes, n_nodes), dtype=np.bool)
+
+	# Record whether we already visited a node. 
+	visited = np.zeros(n_nodes, dtype=np.bool)
+
+	# We have alredy visited root. 
+	visited[root] = True
+
+	# The node list for this subgraph. 
+	node_list = None
+	# The edge list for this subgraph. 
+	edge_list = None
+
+	while len(queue) > 0:
+		# The current root in the traversal. 
+		_v, _d = queue[0]
+		# Pop this vertex from the queue. 
+		queue = queue[1:]
+
+		# If we have reached the maximum allowed depth, stop, and backtrack.
+		if _d == max_depth:
+			continue
+		
+		# Neighbours of _v that we have not already visited. 
+		neighbours = [i for i in np.where(adj_mat[_v, :] == True)[0] if not visited[i]]
+
+		# If we have no more possible neighbours, stop and backtrack. 
+		if len(neighbours) == 0:
+			continue
+
+		# Mark all neighbours as visited. 
+		visited[neighbours] = True
+
+		# Add these edges to the adjacency matrix. 
+		tree_adjmat[_v, neighbours] = True
+
+		# Insert these in the queue. 
+		_next_nodes = [[_n, _d + 1] for _n in neighbours]
+		queue += _next_nodes	
+
+	# The node list can be obtained directly from visited. 
+	node_list = np.where(visited == True)[0].astype(np.int)
+
+	# These are the edge ends. 
+	edge_ends = np.where(tree_adjmat == True)
+	edge_list = [_edge_id_from_node_ids[e0,e1] for e0, e1 in zip(edge_ends[0], edge_ends[1])]
+
+	# Make adjacency matrix symmetric. 
+	tree_adjmat = tree_adjmat + tree_adjmat.T
+
+	# Also create a sliced matrix, only from the visited nodes. 
+	_sliced = tree_adjmat[node_list,:][:,node_list]
+
+	# Return this adjcency matrix. 
+	return _sliced, node_list, edge_list
+
 
 

@@ -149,7 +149,8 @@ class Slave:
 
 	def get_node_label(self, n_id):
 		'''
-		Retrieve the label of a node in the current labelling
+		Retrieve the label of a node in the current labelling. 
+		The node ID is relative to the Lattice, and not the Slave. 
 		'''
 		if n_id not in self.node_list:
 			print self.node_list,
@@ -771,7 +772,7 @@ class Lattice:
 
 		self.decomposition = decomposition
 
-		_naive_search = True
+		_naive_search = False
 
 		# Find the least "step" size in energy. This is given by the smallest difference
 		#   between any two energy energies in the Lattice. 
@@ -879,7 +880,7 @@ class Lattice:
 				%(self.subgradient_norms[-1], primal_cost, dual_cost, primal_cost-dual_cost, self._best_primal_cost - self._best_dual_cost)
 
 			# Switch to step strategy if n_miss = disagreements.size < 5% of number of nodes. 
-			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.000*self.n_nodes:
+			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.001*self.n_nodes:
 				print 'Switching to step strategy as n_miss < 0.1% of the number of nodes.'
 				a_start = alpha
 				self._optim_strategy = 'step'
@@ -961,7 +962,7 @@ class Lattice:
 			# Retrieve labels assigned to this point by each slave, and make it into a one-hot vector. 
 	#			ls_		= [self.slave_list[s].get_node_label(n_id) for s in s_ids]
 			ls_		= np.array([make_one_hot(self.slave_list[s].get_node_label(n_id), self.n_labels[n_id]) for s in s_ids])
-			ls_avg_	= np.mean(ls_, axis=0)
+			ls_avg_	= np.mean(ls_, axis=0, keepdims=True)
 	
 			# Check if all labellings for this node agree. 
 			if np.max(ls_avg_) == 1:
@@ -969,7 +970,7 @@ class Lattice:
 				#   all slaves assigned the same label to this node (otherwise, the maximum
 				#   number in ls_avg_ would be less than 1).
 				continue
-	
+
 			# The next step was to iterate over all slaves. We calculate the subgradient here
 			#   given by 
 			#   
@@ -1040,7 +1041,7 @@ class Lattice:
 			ls_		= np.array([
 						make_one_hot([self.slave_list[s].get_node_label(x), self.slave_list[s].get_node_label(y)], self.n_labels[x], self.n_labels[y]) 
 						for s in s_ids])
-			ls_avg_	= np.mean(ls_, axis=0)
+			ls_avg_	= np.mean(ls_, axis=0, keepdims=True)
 	
 			# Check if all labellings for this node agree. 
 			if np.max(ls_avg_) == 1:
@@ -1048,7 +1049,7 @@ class Lattice:
 				#   all slaves assigned the same label to this node (otherwise, the maximum
 				#   number in ls_avg_ would be less than 1).
 				continue
-	
+
 			# The next step was to iterate over all slaves. We calculate the subgradient here
 			#   given by 
 			#   
@@ -1281,7 +1282,7 @@ class Lattice:
 		                                   not (n_id%self.cols == 0 and x-n_id == -1) and \
 				                           not (x%self.cols == 0 and x-n_id == 1)]
 			e_neighs = [self._edge_id_from_node_ids(n_id, x) if n_id < x else self._edge_id_from_node_ids(x, n_id) for x in neighs]
-			edge_conflicts[neighs] = True
+			edge_conflicts[e_neighs] = True
 
 		# Update self._check_edges to reflect to be only these edges. 
 		self._check_edges = np.where(edge_conflicts == True)[0].astype(np.int)
