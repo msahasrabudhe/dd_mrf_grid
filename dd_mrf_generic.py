@@ -345,7 +345,7 @@ class Graph:
 		self._max_edges_in_slave = 0
 
 		# Create adjacency matrices. 
-		subtree_data = self._generate_trees_greedy(self.adj_mat)
+		subtree_data = self._generate_trees_greedy()
 
 		# The number of slaves
 		self.n_slaves = len(subtree_data)
@@ -831,15 +831,15 @@ class Graph:
 
 		return _outputs
 
-	def _generate_trees_greedy(self, adj_mat):
+	def _generate_trees_greedy(self):
 		'''
 		Generate trees in a greedy manner. The aim is to greedily generate trees starting at the first
 		node, so that each tree is as large as possible, and we can skip as many nodes for root as possible. 
 		'''
-		n_nodes = adj_mat.shape[0]
+		n_nodes = self.adj_mat.shape[0]
 
-		adj_mat_copy = np.zeros_like(adj_mat)
-		adj_mat_copy[:] = adj_mat[:]
+		adj_mat_copy = np.zeros_like(self.adj_mat)
+		adj_mat_copy[:] = self.adj_mat[:]
 
 		# Set the max_depth to n_nodes, so that the maximum possible tree is discovered every time. 
 		max_depth = n_nodes
