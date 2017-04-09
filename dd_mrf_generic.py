@@ -1,6 +1,9 @@
-# This library calculates an approximation to the optimal of an artibrary energy on a 2-D lattice
-#	by splitting the lattice into sub-graphs formed by the smallest possible loops,
-#	that is, the smallest loops of four vertices (nodes) forming a square. 
+#!/usr/bin/python
+
+# This library calculates an approximation to the optimal of an artibrary energy on a
+#   random graph, by splitting the graph into trees based on a greedy strategy, and
+#	using the DD-MRF algorithm to solve the resulting dual problem. 
+# The graph decomposition is equivalent to a standard LP relaxation of the problem. 
 
 import numpy as np
 import multiprocessing
