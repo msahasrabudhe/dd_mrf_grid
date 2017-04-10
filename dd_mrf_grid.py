@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 # This library calculates an approximation to the optimal of an artibrary energy on a 2-D lattice
 #	by splitting the lattice into sub-graphs formed by the smallest possible loops,
 #	that is, the smallest loops of four vertices (nodes) forming a square. 
@@ -709,6 +711,65 @@ class Lattice:
 		# For convenience, turn the individual lists in nodes_in_slaves and edges_in_slaves into numpy arrays. 
 		self.nodes_in_slaves	= [np.array(t) for t in self.nodes_in_slaves]
 		self.edges_in_slaves	= [np.array(t) for t in self.edges_in_slaves]
+
+
+	def _create_custom_slaves(self, slave_list):
+		'''
+		Create a custom decomposition of the Graph. This function allows the user to 
+		create a custom decomposition of the graph and apply this decomposition on 
+		an instance of Graph. 
+
+		Inputs
+		======
+	        slave_list: A series of instances of type Slave. Could 
+                        be a list or a Numpy array. Each member of 'slave_list' 
+	                    must be of type Slave, and have all the required members
+	                    initialised. 
+	
+		'''
+
+		# Convert to Numpy array. 
+		slave_list = np.array(slave_list)
+
+		# Assign to self.slave_list
+		self.slave_list = slave_list
+
+		# The number of slaves. 
+		self.n_slaves = slave_list.size
+
+		# Create empty lists for nodes_in_slaves and edges_in_slaves. 
+		self.nodes_in_slaves = [[] for i in range(self.n_nodes)]
+		self.edges_in_slaves = [[] for i in range(self.n_edges)]
+
+		# Initialise _max_*_in_slave
+		self._max_nodes_in_slave = 0
+		self._max_edges_in_slave = 0
+
+		for s_id in range(self.n_slaves):
+			# Get node and edge lists. 
+			node_list = slave_list[s_id].node_list 
+			edge_list = slave_list[s_id].edge_list
+
+			# Number of nodes and edges. 
+			n_nodes   = node_list.size
+			n_edges   = edge_list.size
+
+			# Update self._max_nodes_in_slave, and self._max_edges_in_slave
+			if self._max_nodes_in_slave < n_nodes:
+				self._max_nodes_in_slave = n_nodes
+			if self._max_edges_in_slave < n_edges:
+				self._max_edges_in_slave = n_edges
+
+			# Add them to nodes_in_slaves and edges_in_slaves. 
+			for n_id in node_list:
+				self.nodes_in_slaves[n_id] += [s_id]
+			for e_id in edge_list:
+				self.edges_in_slaves[e_id] += [s_id]
+
+		# Convert lists in self.nodes_in_slaves and self.edges_in_slaves to 
+		#    Numpy arrays for convenience. 
+		self.nodes_in_slaves = [np.array(t) for t in self.nodes_in_slaves]
+		self.edges_in_slaves = [np.array(t) for t in self.edges_in_slaves]
 
 
 	def optimise(self, a_start=1.0, max_iter=1000, decomposition='cell', strategy='step', _momentum=0.0, _verbose=True):
