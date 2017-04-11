@@ -926,6 +926,8 @@ class Lattice:
 			# Test: #TODO
 			# If disagreements are less than or equal to 2, we do a brute force
 			#    to search for the solution. 
+			# Not a very good hack. Does not have a good argument. _naive_search is False, 
+			#    best not to use it.
 			if _naive_search and primal_cost-dual_cost <= self._erg_step:
 				print 'Forcing naive search as _naive_search is True, and difference in primal and dual costs <= _erg_step.'
 				self.force_naive_search(disagreements, response='y')
