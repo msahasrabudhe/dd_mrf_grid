@@ -961,17 +961,12 @@ class Lattice:
 		# 	disagree with at least one other slave on the labelling of at least one node. 
 		_to_solve	= [self.slave_list[i] for i in self._slaves_to_solve]
 		# The number of cores to use is the number of cores on the machine minus 1. 
-		n_cores		= cpu_count() - 1
-		# Use only as many cores as needed. 
-		if n_cores > len(_to_solve):
-			n_cores = len(_to_solve)
+		# Also, use only as many cores as needed. 
+		n_cores		= np.min([cpu_count() - 1, len(_to_solve)])
 
 		# Optimise the slaves. 
 		# Using Joblib. 
 		optima		= Parallel(n_jobs=n_cores)(delayed(_optimise_slave)(s) for s in _to_solve)
-		# Using Multiprocessing
-#		_multp = multiprocessing.Pool(n_cores)
-#		optima = _multp.map(_optimise_slave, _to_solve)
 # --- Comment the previous line, and uncomment the following three lines if you wish to solve
 # ---   the slaves sequentially instead of parallelly.
 #		optima = []
@@ -1022,7 +1017,9 @@ class Lattice:
 	
 			# Retrieve labels assigned to this point by each slave, and make it into a one-hot vector. 
 	#			ls_		= [self.slave_list[s].get_node_label(n_id) for s in s_ids]
-			ls_		= np.array([make_one_hot(self.slave_list[s].get_node_label(n_id), self.n_labels[n_id]) for s in s_ids])
+			ls_		= np.array([
+					    make_one_hot(self.slave_list[s].get_node_label(n_id), self.n_labels[n_id])
+					    for s in s_ids])
 			ls_avg_	= np.mean(ls_, axis=0, keepdims=True)
 	
 			# Check if all labellings for this node agree. 
@@ -1046,8 +1043,6 @@ class Lattice:
 	
 			# Mark this update to be done later. 
 			self._slave_node_up[s_ids, sl_nids, :self.n_labels[n_id]]  = _node_up #:self.n_labels[n_id]] = _node_up
-			# Add this value to the subgradient. 
-			norm_gt	+= np.sum(_node_up**2)
 			# Mark this slave for node updates. 
 			self._mark_sl_up[0, s_ids] = True
 	
@@ -1125,8 +1120,6 @@ class Lattice:
 	
 			# Mark this update to be done later. 
 			self._slave_edge_up[s_ids, sl_eids, :self.n_labels[x]*self.n_labels[y]] = _edge_up #:self.n_labels[x]*self.n_labels[y]] = _edge_up
-			# Add this value to the subgradient. 
-			norm_gt	+= np.sum(_edge_up**2)
 			# Mark this slave for edge updates. 
 			self._mark_sl_up[1, s_ids] = True
 
@@ -1216,8 +1209,12 @@ class Lattice:
 		# Reset the slaves to solve. 
 		self._slaves_to_solve = np.where(np.sum(self._mark_sl_up, axis=0)!=0)[0]
 
+		# The subgradient is the L2-norm of the update matrices. 
+		# We want the square of the subgradient, in any case. 
+		norm_gt  = np.sum(self._slave_node_up**2)
+		norm_gt += np.sum(self._slave_edge_up**2)
 		# Record the norm of the subgradient. 
-		self.subgradient_norms += [norm_gt]
+		self.subgradient_norms += [np.sqrt(norm_gt)]
 
 		# Add momentum.
 		self._slave_node_up = (1.0 - self._momentum)*self._slave_node_up + self._momentum*self._prv_node_sg
@@ -1328,8 +1325,8 @@ class Lattice:
 		for n_id in range(self.n_nodes):
 			s_ids	= self.nodes_in_slaves[n_id]
 			ls_		= [self.slave_list[s].get_node_label(n_id) for s in s_ids]
-			ret_	= reduce(lambda x,y: x and (y == ls_[0]), ls_[1:], True)
-			if not ret_:
+			ret_	= map(lambda x: x == ls_[0], ls_[1:])
+			if False in ret_:
 				node_conflicts[n_id] = True
 
 		# Update self._check_nodes to find only those nodes where a disagreement exists. 
@@ -1341,8 +1338,8 @@ class Lattice:
 			neighs = [n_id + x for x in [-self.cols, -1, 1, self.cols]]
 			neighs = [x for x in neighs if x >= 0 and x < self.n_nodes and \
 		                                   not (n_id%self.cols == 0 and x-n_id == -1) and \
-				                           not (x%self.cols == 0 and x-n_id == 1)]
-			e_neighs = [self._edge_id_from_node_ids(n_id, x) if n_id < x else self._edge_id_from_node_ids(x, n_id) for x in neighs]
+				                           not (x%self.cols == 0 and x-n_id == 1)]	# Ensure valid edges only.
+			e_neighs = [self._edge_id_from_node_ids(n_id, x) for x in neighs]
 			edge_conflicts[e_neighs] = True
 
 		# Update self._check_edges to reflect to be only these edges. 
@@ -1474,6 +1471,11 @@ class Lattice:
 		'''
 		Lattice._edge_id_from_node_ids(): Return the edge ID given the nodes it connects. 
 		'''
+		# If y is less than x, swap them, as we assume the edge from the lower ID to the 
+		#   higher ID. 
+		if y < x:
+			x, y = y, x
+
 		t		= x/self.cols
 		u		= x % self.cols
 		edge_id	= (2*self.cols - 1)*t
