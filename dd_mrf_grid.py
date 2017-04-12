@@ -835,6 +835,16 @@ class Lattice:
 
 		_naive_search = False
 
+		# TEST: 
+		# Restrict node and edge energies to be in [0, 1]
+#		n_min, n_max = np.min(self.node_energies), np.max(self.node_energies)
+#		e_min, e_max = np.min(self.edge_energies), np.max(self.edge_energies)
+#		g_min, g_max = np.min([n_min, e_min]), np.max([n_max, e_max])
+#		self.node_energies = (self.node_energies - g_min)/(g_max - g_min)
+#		self.edge_energies = (self.edge_energies - g_min)/(g_max - g_min)
+		# Scale a_start if any of the 'step' strategies are being used. 
+#		a_start = a_start/(g_max - g_min)
+
 		# Find the least "step" size in energy. This is given by the smallest difference
 		#   between any two energy energies in the Lattice. 
 		# HACK: If the difference between primal and dual energies at 
@@ -912,8 +922,8 @@ class Lattice:
 			# Verify whether the algorithm has converged. If all slaves agree
 			#    on the labelling of every node, we have convergence. 
 			if self._check_consistency():
-				print 'Converged after %d iterations!' %(it)
-				print 'alpha_t at convergence iteration is %g.' %(alpha)
+				print 'Converged after %d iterations!\n' %(it)
+				print 'At convergence, PRIMAL = %.6f, DUAL = %.6f, Gap = %.6f.' %(primal_cost, dual_cost, primal_cost - dual_cost)
 				# Finally, assign labels.
 				self._assign_labels()
 				# Break from loop.
@@ -1229,7 +1239,7 @@ class Lattice:
 			alpha   = a_start/(1 + it)
 		elif self._optim_strategy is 'step_sg':
 			alpha   = a_start/np.sqrt(it)
-			alpha   = alpha*1.0/norm_gt
+			alpha   = alpha*1.0/np.sqrt(norm_gt)
 		elif self._optim_strategy in ['adaptive', 'adaptive_d']:
 			approx_t	= self._best_primal_cost
 			dual_t		= self.dual_costs[-1]
@@ -1394,44 +1404,38 @@ class Lattice:
 				n_id  = node_order[i]
 				n_lbl = self.n_labels[n_id]
 				# Initial cost is just the unary. 
-				cost = self.node_energies[n_id, :n_lbl]
+				cost = np.exp(-1*self.node_energies[n_id, :n_lbl])
 #				print 'unary    ', self.node_energies[n_id, :n_lbl]
+					
+				# Check that an edge exists between n_id and (n_id + offset)
+				# No top (bottom) edges for vertices in the top (bottom) row.
+				# No left edges for vertices in the left-most column. 
+				# No right edges for vertices in the right-most column. 
+				neighs = [n_id + offset for offset in [-self.cols, -1, 1, self.cols] if (n_id + offset >= 0 and n_id + offset < self.n_nodes and \
+				          not (n_id%self.cols == 0 and offset == -1) and \
+				          not ((n_id+1)%self.cols == 0 and offset == 1))]
 
-				for offset in [-self.cols, -1, 1, self.cols]:	
-					# Check that an edge exists between n_id and (n_id + offset)
-					# No top (bottom) edges for vertices in the top (bottom) row.
-					# No left edges for vertices in the left-most column. 
-					# No right edges for vertices in the right-most column. 
-					if n_id + offset >= 0 and n_id + offset < self.n_nodes and \
-						not (n_id%self.cols == 0 and offset == -1) and \
-						not ((n_id+1)%self.cols == 0 and offset == 1):          
+				for np_id in neighs:
+					e_id = self._edge_id_from_node_ids(n_id, np_id)
 
-						np_id = n_id + offset
-						# Check if the node lies to the left or the right of n_id in node_order
-						i, j = np.min([n_id, np_id]), np.max([n_id, np_id])
-						e_id = self._edge_id_from_node_ids(i, j)
-						r, c = n_id/self.cols, n_id%self.cols
-
-						if np_id in node_order[:i]:
-							cost += self.edge_energies[e_id,:n_lbl,labels[np_id]] if np_id > n_id else self.edge_energies[e_id,labels[np_id],:n_lbl]
-#							print 'pairwise ', self.edge_energies[e_id,:n_lbl,labels[np_id]] if np_id > n_id else self.edge_energies[e_id,labels[np_id],:n_lbl]
-						else:
-							# Get the slave ID in which this edge is. 
-							if offset == 1 or offset == -1:
-								s_id = r	
-							else:
-								s_id = c + self.rows
-
+					# Check if the node lies to the left or the right of n_id in node_order
+					if np_id in node_order[:i]:
+						ee_neigh = self.edge_energies[e_id,:n_lbl,labels[np_id]] if np_id > n_id else self.edge_energies[e_id,labels[np_id],:n_lbl]
+						cost += np.exp(-1*ee_neigh)
+#						print 'pairwise ', self.edge_energies[e_id,:n_lbl,labels[np_id]] if np_id > n_id else self.edge_energies[e_id,labels[np_id],:n_lbl]
+					else:
+						# Get the slave ID in which this edge is. 
+						for s_id in self.edges_in_slaves[e_id]:
 							e_id_in_s = self.slave_list[s_id].edge_map[e_id]
 							n_edges_in_s = self.slave_list[s_id].graph_struct['n_edges']
-							
+						
 							e_id_in_s += n_edges_in_s if np_id > n_id else 0
-							cost += (1 - self.slave_list[s_id]._messages[e_id_in_s, :n_lbl])
-#							print 'msgs     ', self.slave_list[s_id]._messages[e_id_in_s, :n_lbl]
+							cost += self.slave_list[s_id]._messages[e_id_in_s, :n_lbl]
+#						print 'msgs     ', self.slave_list[s_id]._messages[e_id_in_s, :n_lbl]
 
 #				print '--'
 
-				labels[n_id] = np.argmin(cost)
+				labels[n_id] = np.argmax(cost)
 		else:
 			for n_id in range(self.n_nodes):
 				# Retrieve the labels assigned by every slave to this node. 
