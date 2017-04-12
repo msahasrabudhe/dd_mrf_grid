@@ -273,6 +273,9 @@ class Lattice:
 		self.node_flags	= np.zeros(self.n_nodes, dtype=np.bool)
 		self.edge_flags	= np.zeros(self.n_edges, dtype=np.bool)
 
+		# A variable which tells us how to estimate primal solutions. 
+		self._est_prim = 'bp'
+
 
 	def set_node_energies(self, i, energies):
 		'''
@@ -907,6 +910,9 @@ class Lattice:
 				print 'done.',
 			sys.stdout.flush()
 
+			# Find the number of disagreeing points. 
+			disagreements = self._find_conflicts()
+
 			# Get the primal cost at this iteration
 			primal_cost     = self._compute_primal_cost()
 			if self._best_primal_cost > primal_cost:
@@ -930,8 +936,6 @@ class Lattice:
 				converged = True
 				break
 
-			# Find the number of disagreeing points. 
-			disagreements = self._find_conflicts()
 
 			# Test: #TODO
 			# If disagreements are less than or equal to 2, we do a brute force
@@ -992,6 +996,7 @@ class Lattice:
 			self.slave_list[s_id]._energy = optima[i][1]
 			if self.slave_list[s_id].struct is 'tree':
 				self.slave_list[s_id]._messages = optima[i][2]
+				self.slave_list[s_id]._messages_in = optima[i][3]
 #			self.slave_list[s_id]._compute_energy()
 
 	# End of Lattice._optimise_slaves()
@@ -1397,15 +1402,20 @@ class Lattice:
 		labels = np.zeros(self.n_nodes, dtype=np.int)
 
 		# Iterate over every node. 
-		if self.decomposition is 'row_col2':
+		if self._est_prim is 'bp':
 			# Use Max product messages to compute the best solution. 
-			node_order = np.arange(self.n_nodes)
-			for i in range(self.n_nodes):
+		
+			# Conflicts are in self._check_nodes. 
+			# Assign non-conflicting labels first. 
+			for n_id in np.setdiff1d(np.arange(self.n_nodes), self._check_nodes):
+				s_id = self.nodes_in_slaves[n_id][0]
+				labels[n_id] = self.slave_list[s_id].get_node_label(n_id)
+
+			# Now traverse conflicting labels. 	
+			node_order = self._check_nodes
+			for i in range(node_order.size):
 				n_id  = node_order[i]
 				n_lbl = self.n_labels[n_id]
-				# Initial cost is just the unary. 
-				cost = np.exp(-1*self.node_energies[n_id, :n_lbl])
-#				print 'unary    ', self.node_energies[n_id, :n_lbl]
 					
 				# Check that an edge exists between n_id and (n_id + offset)
 				# No top (bottom) edges for vertices in the top (bottom) row.
@@ -1414,28 +1424,49 @@ class Lattice:
 				neighs = [n_id + offset for offset in [-self.cols, -1, 1, self.cols] if (n_id + offset >= 0 and n_id + offset < self.n_nodes and \
 				          not (n_id%self.cols == 0 and offset == -1) and \
 				          not ((n_id+1)%self.cols == 0 and offset == 1))]
-
-				for np_id in neighs:
-					e_id = self._edge_id_from_node_ids(n_id, np_id)
-
-					# Check if the node lies to the left or the right of n_id in node_order
-					if np_id in node_order[:i]:
-						ee_neigh = self.edge_energies[e_id,:n_lbl,labels[np_id]] if np_id > n_id else self.edge_energies[e_id,labels[np_id],:n_lbl]
-						cost += np.exp(-1*ee_neigh)
-#						print 'pairwise ', self.edge_energies[e_id,:n_lbl,labels[np_id]] if np_id > n_id else self.edge_energies[e_id,labels[np_id],:n_lbl]
-					else:
-						# Get the slave ID in which this edge is. 
+				neighs = [_n for _n in neighs if _n in node_order[:i]]
+				
+				node_bel = np.zeros(n_lbl)
+				if len(neighs) == 0:
+				# If there are no previous neighbours, take the maximum of the node belief. 
+					for s_id in self.nodes_in_slaves[n_id]:
+						n_id_in_s = self.slave_list[s_id].node_map[n_id]
+						node_bel += self.slave_list[s_id]._messages_in[n_id_in_s, :n_lbl]
+					labels[n_id] = np.argmax(node_bel)
+				else:
+				# Else, take the argmax decided by the sum of messages from its neighbours that
+				#   have already appeared in node_order. 
+					for _n in neighs:
+						e_id = self._edge_id_from_node_ids(_n, n_id)
 						for s_id in self.edges_in_slaves[e_id]:
-							e_id_in_s = self.slave_list[s_id].edge_map[e_id]
 							n_edges_in_s = self.slave_list[s_id].graph_struct['n_edges']
-						
-							e_id_in_s += n_edges_in_s if np_id > n_id else 0
-							cost += self.slave_list[s_id]._messages[e_id_in_s, :n_lbl]
+							_e_id = self.slave_list[s_id].edge_map[e_id]
+							_e_id += n_edges_in_s if _n > n_id else 0
+							node_bel += self.slave_list[s_id]._messages[_e_id, :n_lbl]
+
+				labels[n_id] = np.argmax(node_bel)
+
+
+#				for np_id in neighs:
+#					e_id = self._edge_id_from_node_ids(n_id, np_id)
+#
+#					# Check if the node lies to the left or the right of n_id in node_order
+#					if np_id in node_order[:i]:
+#						ee_neigh = self.edge_energies[e_id,:n_lbl,labels[np_id]] if np_id > n_id else self.edge_energies[e_id,labels[np_id],:n_lbl]
+#						cost += np.exp(-1*ee_neigh)
+##						print 'pairwise ', self.edge_energies[e_id,:n_lbl,labels[np_id]] if np_id > n_id else self.edge_energies[e_id,labels[np_id],:n_lbl]
+#					else:
+#						# Get the slave ID in which this edge is. 
+#						for s_id in self.edges_in_slaves[e_id]:
+#							e_id_in_s = self.slave_list[s_id].edge_map[e_id]
+#							n_edges_in_s = self.slave_list[s_id].graph_struct['n_edges']
+#						
+#							e_id_in_s += n_edges_in_s if np_id > n_id else 0
+#							cost += self.slave_list[s_id]._messages[e_id_in_s, :n_lbl]
 #						print 'msgs     ', self.slave_list[s_id]._messages[e_id_in_s, :n_lbl]
 
 #				print '--'
 
-				labels[n_id] = np.argmax(cost)
 		else:
 			for n_id in range(self.n_nodes):
 				# Retrieve the labels assigned by every slave to this node. 
@@ -1734,10 +1765,10 @@ def _optimise_tree(slave):
 	edge_pot	= np.array([np.exp(-1*ee) for ee in slave.edge_energies])
 	gs			= slave.graph_struct
 	# Call bp.max_prod_bp
-	labels, messages = bp.max_prod_bp(node_pot, edge_pot, gs)
+	labels, messages, messages_in = bp.max_prod_bp(node_pot, edge_pot, gs)
 	# We return the energy. 
 	energy = _compute_tree_slave_energy(slave.node_energies, slave.edge_energies, labels, slave.graph_struct)
-	return labels, energy, messages
+	return labels, energy, messages, messages_in
 # ---------------------------------------------------------------------------------------
 
 
