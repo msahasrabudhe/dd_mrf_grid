@@ -289,10 +289,16 @@ class Graph:
 			def h():
 				return self._create_tree_slaves(max_depth=md)
 			return h
+		# Create a closure to handle the required input of slave_list to self._create_custom_slaves().
+		def _make_create_custom_slaves(sl):
+			def h():
+				return self._create_custom_slaves(sl)
+			return h
 
 		# Functions to call depending on which slave is chosen
 		_slave_funcs = {
 			'tree':    _make_create_tree_slaves(max_depth)
+			'custom':  _make_create_custom_slaves(slave_list)
 		}
 		
 		if decomposition not in _slave_funcs.keys():
@@ -463,7 +469,7 @@ class Graph:
 
 
 
-	def optimise(self, a_start=1.0, max_iter=1000, decomposition='tree', strategy='step', max_depth=2, _momentum=0.0, _verbose=True):
+	def optimise(self, a_start=1.0, max_iter=1000, decomposition='tree', strategy='step', max_depth=2, _momentum=0.0, _verbose=True, slave_list=None):
 		'''
 		Graph.optimise(): Optimise the set energies over the lattice and return a labelling. 
 
@@ -488,8 +494,9 @@ class Graph:
 		'''
 
 		# Check if a permissible decomposition is used. 
-		if decomposition not in ['tree']:
-			print 'Permissible values for decomposition is \'tree\'.'
+		if decomposition not in ['tree', 'custom']:
+			print 'Permissible values for decomposition are \'tree\', and \'custom\' .'
+			print 'Custom decomposition must be specified in the form of a list of slaves if \'custom\' is chosen.'
 			raise ValueError
 
 		# Check if a permissible strategy is being used. 
@@ -545,7 +552,7 @@ class Graph:
 		# 	self.slave_list. The numbering of the slaves starts from the top-left,
 		# 	and continues in row-major fashion. For example, there are 
 		#   (self.rows-1)*(self.cols-1) slaves if the 'cell' decomposition is used. 
-		self._create_slaves(decomposition=self.decomposition, max_depth=max_depth)
+		self._create_slaves(decomposition=self.decomposition, max_depth=max_depth, slave_list=slave_list)
 
 		# Create update variables for slaves. Created once, reset to zero each time
 		#   _apply_param_updates() is called. 
