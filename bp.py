@@ -11,6 +11,14 @@ def max_prod_bp(node_pot, edge_pot, graph_struct):
 	e_ids			= graph_struct['e_ids']
 	n_states		= graph_struct['n_states']
 
+	# Normalise node_pot and edge_pot to lie in [0,1] 
+	#   so that messages don't explode. 
+#	mnp = np.max(node_pot)
+#	mep = np.max(edge_pot)
+#	mmx = np.max([mnp, mep])
+#	node_pot /= mmx
+#	edge_pot /= mmx
+
 	# The maximum state
 	max_state	= np.max(n_states)
 
@@ -39,7 +47,7 @@ def max_prod_bp(node_pot, edge_pot, graph_struct):
 
 	# Messages to be received. Each element i stores the message received
 	#   by node i. 
-	messages = np.ones((n_edges*2, max_state))
+	messages = np.zeros((n_edges*2, max_state))
 	# Stores the product of in-coming messages into a node. 
 	messages_in = np.ones((n_nodes, max_state))
 	sent = np.zeros(n_edges*2, dtype=np.bool)
@@ -96,6 +104,7 @@ def max_prod_bp(node_pot, edge_pot, graph_struct):
 		sent[m_id] = True
 		# Normalise.
 		messages[m_id, :n_states[_to]] /= np.sum(messages[m_id,:n_states[_to]])
+
 		messages_in[_to, :n_states[_to]] *= messages[m_id, :n_states[_to]]
 
 		# If the degree of the node _to is 0, it is supposed to be the root. 
@@ -140,15 +149,20 @@ def max_prod_bp(node_pot, edge_pot, graph_struct):
 
 		# Normalise.
 		messages[m_id,:n_states[_to]] /= np.sum(messages[m_id,:n_states[_to]])
+
 		messages_in[_to,:n_states[_to]] *= messages[m_id,:n_states[_to]]
 
-	messages_in /= np.tile(np.sum(messages_in, axis=1, keepdims=True), [1, max_state])
+#	messages_in /= np.tile(np.sum(messages_in, axis=1, keepdims=True), [1, max_state])
 
 	for _n in range(n_nodes):
 		_t = messages_in[_n,:n_states[_n]]*node_pot[_n,:n_states[_n]]
-		labels[_n] = np.argmax(_t)
+		# If there are multiple random values, randomly choose one. 
+		_max_at    = np.where(_t == np.max(_t))[0]
+		_n_max_at  = _max_at.size
+		labels[_n] = _max_at[np.random.randint(_n_max_at)]
+#		labels[_n] = np.argmax(_t)
 		
-	return labels, messages
+	return labels, messages, messages_in
 
 
 def make_graph_struct(adj_mat, n_states):
