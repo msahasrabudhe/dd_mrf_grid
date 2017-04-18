@@ -957,7 +957,7 @@ class Lattice:
 				%(self.subgradient_norms[-1], primal_cost, dual_cost, primal_cost-dual_cost, self._best_primal_cost - self._best_dual_cost)
 
 			# Switch to step strategy if n_miss = disagreements.size < 5% of number of nodes. 
-			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.001*self.n_nodes:
+			if self._optim_strategy is 'adaptive' and  disagreements.size < 0.000*self.n_nodes:
 				print 'Switching to step strategy as n_miss < 0.1% of the number of nodes.'
 				a_start = alpha
 				self._optim_strategy = 'step'
@@ -1402,7 +1402,7 @@ class Lattice:
 		labels = np.zeros(self.n_nodes, dtype=np.int)
 
 		# Iterate over every node. 
-		if self._est_prim is 'bp':
+		if self.decomposition is not 'cell' and self._est_prim is 'bp':
 			# Use Max product messages to compute the best solution. 
 		
 			# Conflicts are in self._check_nodes. 
@@ -1434,8 +1434,8 @@ class Lattice:
 						node_bel += self.slave_list[s_id]._messages_in[n_id_in_s, :n_lbl]
 					labels[n_id] = np.argmax(node_bel)
 				else:
-				# Else, take the argmax decided by the sum of messages from its neighbours that
-				#   have already appeared in node_order. 
+				# Else, take the argmax decided by the sum of pairwise beliefs with all neighbours
+				# that have already appeared in node_order before this node. 
 					for _n in neighs:
 						e_id = self._edge_id_from_node_ids(_n, n_id)
 						for s_id in self.edges_in_slaves[e_id]:
