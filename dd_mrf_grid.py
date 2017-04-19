@@ -130,6 +130,12 @@ class Slave:
 		for i in range(self.edge_list.size):
 			self.edge_map[edge_list[i]] = i
 
+		# Generate all possible labellings for this slave. This might take some time everytime, 
+		#    so it is better to generate them once and store them in memory. 
+		[ni, nj, nk, nl]    = self.n_labels
+		self.all_labellings = np.array([[i,j,k,l] for i in range(ni) for j in range(nj) 
+								for k in range(nk) for l in range(nl)])
+
 	def get_params(self):
 		'''
 		Slave.get_params(): Return parameters of this slave
@@ -1729,10 +1735,8 @@ def _optimise_4node_slave(slave):
 	n_labels			= slave.n_labels
 	edge_energies		= slave.edge_energies
 
-	# Generate all labellings. 
-	[ni, nj, nk, nl]	= n_labels
-	all_labellings		= np.array([[i,j,k,l] for i in range(ni) for j in range(nj) 
-								for k in range(nk) for l in range(nl)])
+	# Use already generated all labellings. 
+	all_labellings      = slave.all_labellings
 	
 	# Minimum energy. We set the minimum energy to four times the maximum node energy plus
 	# 	four times the maximum edge energy. 
