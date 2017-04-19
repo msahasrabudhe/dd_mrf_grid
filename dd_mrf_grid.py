@@ -953,7 +953,7 @@ class Lattice:
 			# Print statistics. .
 			if _verbose:
 				print ' alpha = %10.6f. n_miss = %6d.' %(alpha, disagreements.size),
-				print '||dg||**2 = %4.2f, PRIMAL = %6.6f. DUAL = %6.6f, P - D = %6.6f, min(P - D) = %6.6f' \
+				print '||dg||**2 = %6.2f, PRIMAL = %12.6f. DUAL = %12.6f, P - D = %12.6f, min(P - D) = %12.6f' \
 				%(self.subgradient_norms[-1], primal_cost, dual_cost, primal_cost-dual_cost, self._best_primal_cost - self._best_dual_cost)
 
 			# Switch to step strategy if n_miss = disagreements.size < 5% of number of nodes. 
@@ -1434,8 +1434,8 @@ class Lattice:
 						node_bel += self.slave_list[s_id]._messages_in[n_id_in_s, :n_lbl]
 					labels[n_id] = np.argmax(node_bel)
 				else:
-				# Else, take the argmax decided by the sum of pairwise beliefs with all neighbours
-				# that have already appeared in node_order before this node. 
+				# Else, take the argmax decided by the sum of messages from its neighbours that
+				#   have already appeared in node_order. 
 					for _n in neighs:
 						e_id = self._edge_id_from_node_ids(_n, n_id)
 						for s_id in self.edges_in_slaves[e_id]:
