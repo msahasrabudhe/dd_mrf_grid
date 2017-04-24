@@ -132,8 +132,9 @@ class Slave:
 
 		# Generate all possible labellings for this slave. This might take some time everytime, 
 		#    so it is better to generate them once and store them in memory. 
-		[ni, nj, nk, nl]    = self.n_labels
-		self.all_labellings = np.array([[i,j,k,l] for i in range(ni) for j in range(nj) 
+		if struct is 'cell':
+			[ni, nj, nk, nl]    = self.n_labels
+			self.all_labellings = np.array([[i,j,k,l] for i in range(ni) for j in range(nj) 
 								for k in range(nk) for l in range(nl)])
 
 	def get_params(self):
