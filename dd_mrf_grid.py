@@ -876,7 +876,7 @@ class Lattice:
 		# Create update variables for slaves. Created once, reset to zero each time
 		#   _apply_param_updates() is called. 
 		self._slave_node_up	= np.zeros((self.n_slaves, self._max_nodes_in_slave, self.max_n_labels))
-		self._slave_edge_up	= np.zeros((self.n_slaves, self._max_edges_in_slave, self.max_n_labels*self.max_n_labels))
+		self._slave_edge_up	= np.zeros((self.n_slaves, self._max_edges_in_slave, self.max_n_labels, self.max_n_labels))
 		# Create a copy of these to hold the previous state update. Akin to momentum
 		#   update used in NNs. 
 		self._prv_node_sg   = np.zeros_like(self._slave_node_up)
@@ -1119,7 +1119,7 @@ class Lattice:
 			# Retrieve labellings of this edge, assigned by each slave.
 			x, y	= self._node_ids_from_edge_id(e_id)
 			ls_		= np.array([
-						make_one_hot([self.slave_list[s].get_node_label(x), self.slave_list[s].get_node_label(y)], self.n_labels[x], self.n_labels[y]) 
+						make_one_hot((self.slave_list[s].get_node_label(x), self.slave_list[s].get_node_label(y)), self.n_labels[x], self.n_labels[y]) 
 						for s in s_ids])
 			ls_avg_	= np.mean(ls_, axis=0, keepdims=True)
 	
@@ -1137,13 +1137,13 @@ class Lattice:
 			#
 			#   for all s. s here signifies slaves. 
 			# This can be very easily done with array operations!
-			_edge_up	= ls_ - np.tile(ls_avg_, [n_slaves_eid, 1])
+			_edge_up	= ls_ - np.tile(ls_avg_, [n_slaves_eid, 1, 1])
 	
 			# Find the node ID for n_id in each slave in s_ids. 
 			sl_eids = [self.slave_list[s].edge_map[e_id] for s in s_ids]
 	
 			# Mark this update to be done later. 
-			self._slave_edge_up[s_ids, sl_eids, :self.n_labels[x]*self.n_labels[y]] = _edge_up #:self.n_labels[x]*self.n_labels[y]] = _edge_up
+			self._slave_edge_up[s_ids, sl_eids, :self.n_labels[x] , :self.n_labels[y]] = _edge_up #:self.n_labels[x]*self.n_labels[y]] = _edge_up
 			# Mark this slave for edge updates. 
 			self._mark_sl_up[1, s_ids] = True
 
@@ -1270,7 +1270,8 @@ class Lattice:
 			if self._mark_sl_up[1, s_id]:
 			 	# Edge updates have been marked. 
 				n_edges_this_slave = self.slave_list[s_id].edge_list.size
-				self.slave_list[s_id].edge_energies += alpha*np.reshape(self._slave_edge_up[s_id,:n_edges_this_slave,:], [n_edges_this_slave,self.max_n_labels,self.max_n_labels])
+				self.slave_list[s_id].edge_energies += alpha*self._slave_edge_up[s_id, :n_edges_this_slave, :, :]
+#				self.slave_list[s_id].edge_energies += alpha*np.reshape(self._slave_edge_up[s_id,:n_edges_this_slave,:], [n_edges_this_slave,self.max_n_labels,self.max_n_labels])
 
 		self._prv_node_sg[:] = self._slave_node_up[:]
 		self._prv_edge_sg[:] = self._slave_edge_up[:]
@@ -1853,14 +1854,12 @@ def make_one_hot(label, s1, s2=None):
 		label = int(label)
 
 	# Number of labels in the final vector. 
-	size = s1 if s2 is None else s1*s2	
+	size = s1 if s2 is None else (s1,s2)	
 
 	# Make final vector. 
 	oh_vec = np.zeros(size, dtype=np.bool)
 	
 	# Set label.
-	if type(label) == list or type(label) == tuple:
-		label = label[0]*s2 + label[1]
 	oh_vec[label] = True
 	# Return 
 	return oh_vec
