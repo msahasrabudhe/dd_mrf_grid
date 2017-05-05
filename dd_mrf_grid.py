@@ -1348,6 +1348,8 @@ class Lattice:
 		edge_conflicts = np.zeros(self.n_edges, dtype=bool)
 
 		for n_id in range(self.n_nodes):
+			if self._n_slaves_nodes[n_id] == 1:
+				continue
 			s_ids	= self.nodes_in_slaves[n_id]
 			ls_		= [self.slave_list[s].get_node_label(n_id) for s in s_ids]
 			ret_	= map(lambda x: x == ls_[0], ls_[1:])
@@ -1358,7 +1360,7 @@ class Lattice:
 		self._check_nodes = np.where(node_conflicts == True)[0].astype(np.int)
 		# Find disagreeing edges. We iterate over self._check_nodes, and add all 
 		#    neighbours of a node in _check_nodes. 
-		for i in range(self._check_nodes.size - 1):
+		for i in range(self._check_nodes.size):
 			n_id = self._check_nodes[i]
 			neighs = [n_id + x for x in [-self.cols, -1, 1, self.cols]]
 			neighs = [x for x in neighs if x >= 0 and x < self.n_nodes and \
