@@ -1,8 +1,14 @@
 # Max product belief propagation
 
 import numpy as np
+import time
 
 def max_prod_bp(node_pot, edge_pot, graph_struct):
+	# Set random seed
+	_ctime = time.time()
+	np.random.seed(np.floor(np.sin(_ctime)*np.sin(_ctime)*_ctime).astype(np.int))
+
+
 	adj_mat			= graph_struct['adj_mat']
 	n_nodes			= graph_struct['n_nodes']
 	n_edges			= graph_struct['n_edges']
