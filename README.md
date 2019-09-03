@@ -1,5 +1,8 @@
 # dd_mrf_grid
 
+# Obsolete !!
+Not updating this repo anymore. Please use [dd_mrf_cpp](https://github.com/msahasrabudhe/dd_mrf_cpp) instead, which is a C++ implementation. It is much faster than this one, works on any graph (still need to specify slaves manually, which can be either tree or cycle), and was tested more than Python grid version. Please see accompanying file test_submodular.cpp for usage.
+
 DD-MRF on a regular 2-D grid
 ============================
 
