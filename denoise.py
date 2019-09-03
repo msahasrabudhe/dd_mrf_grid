@@ -26,9 +26,10 @@ edge_energy = [[0.0, 255.0-K],[255.0-K, 0.0]]
 for e in lat._find_empty_attributes()[1]:
 	lat.set_edge_energies(e[0], e[1], edge_energy)
 
+a = 0.5*np.var(np.concatenate((lat.node_energies.flatten(), lat.edge_energies.flatten())))
 if __name__ == '__main__':
 	if lat.check_completeness():
-		lat.optimise(a_start=1.0, max_iter=10000, strategy='adaptive', decomposition='row_col')
+		lat.optimise(a_start=a, max_iter=1000, strategy='step', decomposition='row_col')
 
 	labels = lat.labels.astype(np.int)
 				
